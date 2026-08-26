@@ -491,6 +491,37 @@ macro_rules! math_fn2_pair {
 }
 
 math_fn1! {
+    /// `10^x`.
+    ///
+    /// `BitExact` reproduces glibc 2.39's `__exp10`, which shares `exp`'s
+    /// table but, like `exp2`, ships with no fused-multiply-add variant.
+    name: Exp10,
+    module: exp10,
+    f64: crate::cube::double::exp10::exp10,
+}
+
+math_fn1! {
+    /// Natural logarithm.
+    ///
+    /// `BitExact` reproduces glibc's `__ieee754_log_fma`, including its
+    /// separate near-one path.
+    name: Ln,
+    module: ln,
+    f64: crate::cube::double::ln::ln,
+}
+
+math_fn1! {
+    /// `2^x`.
+    ///
+    /// `BitExact` reproduces glibc's `__ieee754_exp2`, which — unlike `exp` —
+    /// ships with no fused-multiply-add variant, so the schedule is separate
+    /// multiplies and adds throughout.
+    name: Exp2,
+    module: exp2,
+    f64: crate::cube::double::exp2::exp2,
+}
+
+math_fn1! {
     /// `e^x`.
     ///
     /// `BitExact` reproduces glibc's `__ieee754_exp_fma`; `Fast` takes a

@@ -18,7 +18,7 @@
 use cubecl::prelude::*;
 
 use crate::config::Config;
-use crate::cube::bits::{inf64, is_nan64};
+use crate::cube::bits::inf64;
 use crate::cube::fma::{FmaKind, fma64};
 use crate::tables::arena::OFF_EXP;
 use crate::tables::double::exp as t;
@@ -34,7 +34,7 @@ pub fn exp(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
     if comptime!(cfg.bit_exact()) {
         bit_exact(x, tab, comptime!(cfg.fma()))
     } else {
-        fast(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
+        fast(x, tab, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
 }
 
@@ -158,7 +158,7 @@ const LN2LO: f64 = f64::from_bits(0x3dea39ef35793c76);
 /// Maximum error measured against the correctly rounded result: below 1 ulp
 /// over `|x| < 512`.
 #[cube]
-pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
+pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
     let kd_s = fma64(x, LOG2E, t::SHIFT, fk);
     let kd = kd_s - t::SHIFT;
     // Cody-Waite: subtract `kd * ln(2)` in two exactly-representable pieces.
@@ -189,20 +189,16 @@ pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
     let mut out = fma64(scale, poly, scale, fk);
 
     if comptime!(checked) {
-        // The reduction is only valid for `|x| < 512`; past that the exponent
-        // arithmetic wraps rather than saturating, so the boundaries are
-        // resolved explicitly. `1 + x` covers both the tiny case and NaN.
+        // The reduction is only valid for `|x| < 512`. Outside it the exponent
+        // arithmetic wraps rather than saturating, and a subnormal result
+        // would be assembled from a bit pattern that has already overflowed
+        // the exponent field — so those inputs take the reference path
+        // instead. That is what `rmath` does with its out-of-range lanes, for
+        // the same reason: the hard cases belong in one place, written once
+        // against the platform routine, rather than re-derived per policy.
         let abstop = u32::cast_from(u64::reinterpret(x) >> 52u64) & 0x7ffu32;
-        if abstop >= 0x408u32 {
-            if is_nan64(x) {
-                out = x + x;
-            } else if x > 709.782712893384 {
-                out = inf64();
-            } else if x < -745.1332191019411 {
-                out = 0.0;
-            }
-        } else if abstop < 0x3c9u32 {
-            out = 1.0 + x;
+        if abstop >= 0x408u32 || abstop < 0x3c9u32 {
+            out = bit_exact(x, tab, fk);
         }
     }
     out

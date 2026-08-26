@@ -49,6 +49,34 @@ fn suite_f64<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
     }
     exact_family_f64(backend, ctx);
 
+    // The ported transcendentals. Each is checked against `rmath`'s bit-exact
+    // object, which its own suite pins to the platform `libm`.
+    macro_rules! ported {
+        ($name:literal, $cube:ident, $rm:ident, $limit:expr, $sweep:expr) => {
+            let sw = $sweep;
+            if exact {
+                check(
+                    backend,
+                    $name,
+                    |v| cube_math::function::$cube::new().eval_f64(ctx, v),
+                    |x| rmath::$rm::new().eval(x),
+                    &sw,
+                );
+            }
+            check_ulp(
+                backend,
+                concat!($name, " (fast)"),
+                |v| cube_math::function::$cube::fast().eval_f64(ctx, v),
+                |x| rmath::$rm::new().eval(x),
+                &sw,
+                $limit,
+            );
+        };
+    }
+    ported!("exp2", Exp2, Exp2, 1.0, sweep_f64(1024.0));
+    ported!("exp10", Exp10, Exp10, 1.5, sweep_f64(310.0));
+    ported!("ln", Ln, Ln, 2.0, sweep_f64(1e300));
+
     check_ulp(
         backend,
         "exp (fast)",

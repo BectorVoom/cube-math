@@ -372,13 +372,27 @@ pub fn check_ulp<E: Elem>(
     let mut bad = Vec::new();
     for (x, &g) in xs.iter().zip(got.iter()) {
         let want = reference(*x);
-        if !want.finite() {
+        // An approximation is allowed to be a little off; it is not allowed to
+        // invent an infinity, lose one, or return a NaN. Those are checked
+        // exactly, in both directions — an earlier version of this compared
+        // only when `want` was non-finite, and an infinity where a subnormal
+        // belonged sailed through as a NaN ulp count that never exceeded the
+        // budget.
+        if !want.finite() || !g.finite() {
             if !same(g, want) && bad.len() < 8 {
-                bad.push(format!("  x = {x:e}: got {g:e}, want {want:e} (special)"));
+                bad.push(format!(
+                    "  x = {x:e} ({}): got {g:e} ({}), want {want:e} ({})",
+                    x.hex(),
+                    g.hex(),
+                    want.hex(),
+                ));
             }
             continue;
         }
         let u = g.ulps_from(want);
+        if u.is_nan() && bad.len() < 8 {
+            bad.push(format!("  x = {x:e}: got {g:e}, want {want:e} (not comparable)"));
+        }
         if u > worst {
             worst = u;
             at = Some(*x);
