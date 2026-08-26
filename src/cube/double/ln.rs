@@ -170,8 +170,40 @@ const LN2LO: f64 = f64::from_bits(0x3dea39ef35793c76);
 /// Away from that band it is below 1 ulp.
 #[cube]
 pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
-    let bits = u64::reinterpret(x);
-    let mut k = i32::cast_from((bits >> 52u64) & 0x7ffu64) - 1023i32;
+    let (kd, poly) = fold(x, fk);
+    let mut out = fma64(kd, LN2LO, fma64(kd, LN2HI, poly, fk), fk);
+
+    if comptime!(checked) {
+        // Zero, negative, subnormal, infinite and NaN all take the reference
+        // path: the reduction assumes a normal positive `x`, and these are
+        // exactly the inputs `rmath` repairs rather than special-cases per
+        // policy. See `exp`'s `fast`.
+        let top = u32::cast_from(u64::reinterpret(x) >> 48u64);
+        if top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
+            out = bit_exact(x, tab);
+        }
+    }
+    out
+}
+
+/// The table-free reduction, shared with [`super::logx`].
+///
+/// Splits a positive normal `x` into `(k, ln(m))` with `x = m 2^k` and `m` in
+/// `[sqrt(2)/2, sqrt(2))`, so that the caller can scale to whatever base it
+/// wants. Returning the two pieces rather than their sum is the point:
+/// `log2` and `log10` want `k` multiplied by a different constant, and folding
+/// it into a natural logarithm first and dividing afterwards would inherit the
+/// error of a large `ln` where the exponent term should be exact.
+#[cube]
+pub fn fold(x: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
+    // A subnormal has no exponent of its own; scale it into the normal range
+    // and take the shift back off `k`. Done here rather than by editing the
+    // exponent field, the way the table paths do it, because the field can go
+    // negative and this reduction reads it as an unsigned quantity.
+    let raw = u64::reinterpret(x);
+    let sub = (raw >> 52u64) & 0x7ffu64 == 0u64;
+    let bits = select(sub, u64::reinterpret(x * P52), raw);
+    let mut k = i32::cast_from((bits >> 52u64) & 0x7ffu64) - 1023i32 - select(sub, 52i32, 0i32);
     // The mantissa, with the exponent replaced by zero: `m` in `[1, 2)`.
     let mut m = f64::reinterpret((bits & 0x000f_ffff_ffff_ffffu64) | 0x3ff0_0000_0000_0000u64);
     // Recentre onto `[sqrt(2)/2, sqrt(2))`, where the series is shortest.
@@ -197,18 +229,5 @@ pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk:
     let both = fma64(t4, mid, lo, fk);
     let poly = s * fma64(t8, hi, both, fk);
 
-    let kd = f64::cast_from(k);
-    let mut out = fma64(kd, LN2LO, fma64(kd, LN2HI, poly, fk), fk);
-
-    if comptime!(checked) {
-        // Zero, negative, subnormal, infinite and NaN all take the reference
-        // path: the reduction above assumes a normal positive `x`, and these
-        // are exactly the inputs `rmath` repairs rather than special-cases per
-        // policy. See `exp`'s `fast`.
-        let top = u32::cast_from(bits >> 48u64);
-        if top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
-            out = bit_exact(x, tab);
-        }
-    }
-    out
+    (f64::cast_from(k), poly)
 }

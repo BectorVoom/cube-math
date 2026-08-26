@@ -511,6 +511,28 @@ math_fn1! {
 }
 
 math_fn1! {
+    /// Base-2 logarithm.
+    ///
+    /// `BitExact` reproduces glibc's `__ieee754_log2_fma`, near-one path
+    /// included.
+    name: Log2,
+    module: log2,
+    f64: crate::cube::double::logx::log2,
+}
+
+math_fn1! {
+    /// Base-10 logarithm.
+    ///
+    /// `BitExact` reproduces glibc's `__log10_finite`, which is a wrapper
+    /// around `__ieee754_log_fma` rather than a table algorithm of its own —
+    /// so this is `Ln`'s table walk, reduced and rescaled the way the
+    /// disassembly does it.
+    name: Log10,
+    module: log10,
+    f64: crate::cube::double::logx::log10,
+}
+
+math_fn1! {
     /// `2^x`.
     ///
     /// `BitExact` reproduces glibc's `__ieee754_exp2`, which — unlike `exp` —
