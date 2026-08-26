@@ -77,7 +77,7 @@ fn f64s(v: &mut Vec<u64>, xs: &[f64]) {
     v.extend(xs.iter().map(|x| x.to_bits()));
 }
 
-/// Build the arena. Called once per client; see [`crate::Tables`].
+/// Build the arena. Called once per client; see [`crate::Ctx`].
 pub fn build() -> Vec<u64> {
     let mut v: Vec<u64> = Vec::with_capacity(ARENA_LEN);
     v.extend_from_slice(&d::exp::TAB);

@@ -7,7 +7,7 @@
 //! rounding. Two roundings is a different number, and once one polynomial term
 //! is off by an ulp the whole claim is gone.
 //!
-//! CubeCL exposes [`cubecl::prelude::fma`], and on the CUDA, HIP and WGSL
+//! CubeCL exposes [`cubecl::prelude::fma()`], and on the CUDA, HIP and WGSL
 //! backends it lowers to the target's real `fma` — one rounding, as required.
 //! The SPIR-V backend does not, and that is the backend `wgpu` uses on Vulkan,
 //! which is the only route to `f64` on a non-NVIDIA GPU. As of `cubecl-spirv`
@@ -23,7 +23,7 @@
 //! [`FmaKind`] comptime parameter of every kernel:
 //!
 //! * [`FmaKind::Hardware`] — use the intrinsic. Costs nothing.
-//! * [`FmaKind::Software`] — use [`fma_f64`] / [`fma_f32`] below, which are
+//! * [`FmaKind::Software`] — use [`fma_f64()`] / [`fma_f32()`] below, which are
 //!   correctly rounded. Around 25 operations instead of one, and the only way
 //!   to stay bit-exact on such a device.
 //!
@@ -128,7 +128,7 @@ pub fn two_sum(a: f64, b: f64) -> (f64, f64) {
 /// the next rounding. (Boldo and Melquiond, *Emulation of FMA and
 /// correctly-rounded sums with round to odd*, 2008.)
 ///
-/// `(h, l)` must come from [`two_sum`], so `l` is `h`'s exact residual.
+/// `(h, l)` must come from [`two_sum()`], so `l` is `h`'s exact residual.
 #[cube]
 pub fn round_odd(h: f64, l: f64) -> f64 {
     let mut out = h;
@@ -174,7 +174,7 @@ pub fn round_odd(h: f64, l: f64) -> f64 {
 ///
 /// so `a' b' + c' = th + vh + vl` exactly, as three doubles. Collapsing that
 /// to one double is where a naive emulation goes wrong, and where
-/// [`round_odd`] comes in: rounding `vh + vl` to odd and then `th + that` to
+/// [`round_odd()`] comes in: rounding `vh + vl` to odd and then `th + that` to
 /// odd leaves a value that the final scale-back rounds correctly, ties
 /// included — and the scale-back is the *only* rounding, so a subnormal result
 /// is correct too instead of being rounded twice.
@@ -253,12 +253,12 @@ pub fn fma_f64(a: f64, b: f64, c: f64) -> f64 {
 
 /// The correctly-rounded `a * b + c` for `f32`.
 ///
-/// Far simpler than [`fma_f64`], because `f64` is wide enough to hold the
+/// Far simpler than [`fma_f64()`], because `f64` is wide enough to hold the
 /// whole exact product: two 24-bit significands make 48, and `f64` carries 53.
 /// So `prod` below is exact, `sum` is `a*b + c` with a single `f64` rounding,
 /// and `err` is that rounding's exact residual. Narrowing `sum` to `f32` is
 /// then a double rounding, which differs from the single one only when `sum`
-/// sits exactly on an `f32` tie while `err` is nonzero — and [`round_odd`]
+/// sits exactly on an `f32` tie while `err` is nonzero — and [`round_odd()`]
 /// fixes exactly that, by moving `sum` off the tie in the direction the
 /// discarded residual points.
 #[cube]
@@ -301,7 +301,7 @@ pub fn round_to_subnormal_grid(rh: f64, rl: f64, k: i32) -> f64 {
 }
 
 /// True when `f` is an odd integer. `f` must be an integral `f64` with
-/// `|f| <= 2^52`, which is what [`round_to_subnormal_grid`] hands it.
+/// `|f| <= 2^52`, which is what [`round_to_subnormal_grid()`] hands it.
 #[cube]
 pub fn is_odd_integer(f: f64) -> bool {
     f - 2.0 * f64::floor(f * 0.5) != 0.0
@@ -337,7 +337,7 @@ pub fn exponent_of(x: f64) -> i32 {
 
 /// Split `x` into `(m, k)` with `x = m * 2^k` and `|m|` in `[1, 2)`.
 ///
-/// Exact — it is an exponent edit — and it is what lets [`two_product`] use
+/// Exact — it is an exponent edit — and it is what lets [`two_product()`] use
 /// Dekker's split without an overflow guard.
 #[cube]
 pub fn to_unit(x: f64) -> (f64, i32) {

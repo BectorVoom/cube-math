@@ -98,7 +98,7 @@ pub fn core(x: f64, tab: &Array<u64>) -> (f64, u64, u64) {
 /// the final combine with the scale is then one fused multiply-add. Thirteen
 /// terms cover `|r| <= log10(2)/2`, where the fourteenth is below a tenth of
 /// an ulp.
-const H1: f64 = 2.302585092994046;
+const H1: f64 = std::f64::consts::LN_10;
 const H2: f64 = 2.6509490552391997;
 const H3: f64 = 2.034678592293477;
 const H4: f64 = 1.1712551489122673;

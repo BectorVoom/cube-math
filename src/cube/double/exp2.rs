@@ -124,7 +124,7 @@ pub fn specialcase(tmp: f64, sbits: u64, ki: u64) -> f64 {
 /// Evaluated without its leading 1 for the same reason [`super::exp`]'s is:
 /// the final combine with the scale is then one fused multiply-add rather than
 /// a rounded `1 + poly` and a rounded multiply.
-const G1: f64 = 0.6931471805599453;
+const G1: f64 = std::f64::consts::LN_2;
 const G2: f64 = 0.2402265069591007;
 const G3: f64 = 0.055504108664821576;
 const G4: f64 = 0.009618129107628477;

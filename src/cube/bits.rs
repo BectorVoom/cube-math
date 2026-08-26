@@ -65,7 +65,7 @@ pub fn is_nan64(x: f64) -> bool {
     (u64::reinterpret(x) & 0x7fff_ffff_ffff_ffffu64) > 0x7ff0_0000_0000_0000u64
 }
 
-/// True when `x` is NaN, single precision. See [`is_nan64`].
+/// True when `x` is NaN, single precision. See [`is_nan64()`].
 #[cube]
 pub fn is_nan32(x: f32) -> bool {
     (u32::reinterpret(x) & 0x7fff_ffffu32) > 0x7f80_0000u32
@@ -96,31 +96,31 @@ pub fn inf64() -> f64 {
     f64::reinterpret(0x7ff0_0000_0000_0000u64)
 }
 
-/// Negative infinity. See [`inf64`].
+/// Negative infinity. See [`inf64()`].
 #[cube]
 pub fn neg_inf64() -> f64 {
     f64::reinterpret(0xfff0_0000_0000_0000u64)
 }
 
-/// A quiet NaN. See [`inf64`].
+/// A quiet NaN. See [`inf64()`].
 #[cube]
 pub fn nan64() -> f64 {
     f64::reinterpret(0x7ff8_0000_0000_0000u64)
 }
 
-/// Positive infinity, single precision. See [`inf64`].
+/// Positive infinity, single precision. See [`inf64()`].
 #[cube]
 pub fn inf32() -> f32 {
     f32::reinterpret(0x7f80_0000u32)
 }
 
-/// Negative infinity, single precision. See [`inf64`].
+/// Negative infinity, single precision. See [`inf64()`].
 #[cube]
 pub fn neg_inf32() -> f32 {
     f32::reinterpret(0xff80_0000u32)
 }
 
-/// A quiet NaN, single precision. See [`inf64`].
+/// A quiet NaN, single precision. See [`inf64()`].
 #[cube]
 pub fn nan32() -> f32 {
     f32::reinterpret(0x7fc0_0000u32)

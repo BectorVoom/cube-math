@@ -160,6 +160,22 @@ fn cases() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
 
 fn check<R: Runtime>(backend: &str) {
     let client = R::client(&Default::default());
+
+    // The emulation is built from error-free transformations — two-sum and
+    // Dekker's split — and those are identities only where the backend does
+    // not reassociate. On a backend that does, `fma_f64` is not merely slow,
+    // it is wrong, and `Fidelity` already says so by refusing to call the
+    // precision bit-exact-capable. Testing it there would be testing something
+    // the crate does not claim.
+    let fidelity = cube_math::probe::Fidelity::measure(&client);
+    if !fidelity.f64.usable || !fidelity.f64.stable_arithmetic {
+        eprintln!(
+            "[{backend}] skipping: the software multiply-add needs arithmetic this \
+             backend rewrites ({})",
+            fidelity.f64.summary(),
+        );
+        return;
+    }
     let (a, b, c) = cases();
     let got = run64(&client, &a, &b, &c);
     let mut bad = Vec::new();

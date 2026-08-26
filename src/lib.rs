@@ -18,9 +18,55 @@
 //!
 //! The result is that the whole `patch_lanes` / `map_lanes` apparatus
 //! disappears, and with it `rmath`'s "delegating" category: the functions whose
-//! bit-exact path had to run one lane at a time on a CPU (`sin`, `cos`, `tan`,
-//! `asin`, `atan2`, `log1p`, `hypot`, the inverse hyperbolics, and all of
-//! single-precision Bessel) are ordinary parallel kernels here.
+//! bit-exact path had to run one lane at a time on a CPU — `log1p` and `hypot`
+//! among those ported so far — are ordinary parallel kernels here.
+//!
+//! # What is ported
+//!
+//! Everything IEEE-754 pins down exactly, in **both** precisions: [`Floor`],
+//! [`Ceil`], [`Trunc`], [`Round`], [`Rint`], [`Sqrt`], [`Abs`], [`Ilogb`],
+//! [`CopySign`], [`Fdim`], [`Fmax`], [`Fmin`], [`Ldexp`], [`Scalbn`],
+//! [`Fmod`], [`Remainder`], [`NextAfter`], [`Frexp`], [`Modf`] and [`Remquo`].
+//!
+//! In double precision, the exponentials [`Exp`], [`Exp2`], [`Exp10`] and
+//! [`Expm1`]; the logarithms [`Ln`], [`Log2`], [`Log10`] and [`Log1p`]; and
+//! [`Pow`], [`Cbrt`] and [`Hypot`].
+//!
+//! Not yet ported: the trigonometric, inverse-trigonometric, hyperbolic, error,
+//! gamma and Bessel families, and the single-precision transcendentals. The
+//! README says what adding one involves.
+//!
+//! [`Floor`]: crate::function::Floor
+//! [`Ceil`]: crate::function::Ceil
+//! [`Trunc`]: crate::function::Trunc
+//! [`Round`]: crate::function::Round
+//! [`Rint`]: crate::function::Rint
+//! [`Sqrt`]: crate::function::Sqrt
+//! [`Abs`]: crate::function::Abs
+//! [`Ilogb`]: crate::function::Ilogb
+//! [`CopySign`]: crate::function::CopySign
+//! [`Fdim`]: crate::function::Fdim
+//! [`Fmax`]: crate::function::Fmax
+//! [`Fmin`]: crate::function::Fmin
+//! [`Ldexp`]: crate::function::Ldexp
+//! [`Scalbn`]: crate::function::Scalbn
+//! [`Fmod`]: crate::function::Fmod
+//! [`Remainder`]: crate::function::Remainder
+//! [`NextAfter`]: crate::function::NextAfter
+//! [`Frexp`]: crate::function::Frexp
+//! [`Modf`]: crate::function::Modf
+//! [`Remquo`]: crate::function::Remquo
+//! [`Exp`]: crate::function::Exp
+//! [`Exp2`]: crate::function::Exp2
+//! [`Exp10`]: crate::function::Exp10
+//! [`Expm1`]: crate::function::Expm1
+//! [`Ln`]: crate::function::Ln
+//! [`Log2`]: crate::function::Log2
+//! [`Log10`]: crate::function::Log10
+//! [`Log1p`]: crate::function::Log1p
+//! [`Pow`]: crate::function::Pow
+//! [`Cbrt`]: crate::function::Cbrt
+//! [`Hypot`]: crate::function::Hypot
 //!
 //! # The two questions, unchanged
 //!
@@ -29,16 +75,43 @@
 //! once per policy, so the generated shader contains only the path you asked
 //! for.
 //!
-//! # Bit-exactness on a GPU
+//! # Bit-exactness on a device
 //!
 //! Every IEEE-754 operation rounds identically on every conforming device, so
 //! replaying the reference schedule on a GPU gives the same bits as replaying
-//! it on a CPU — provided the backend does not rewrite the arithmetic.
-//! [`probe`] measures the three things that could, on the live device, before
-//! you rely on the claim. See [`cube::fma`] for the one that actually varies
-//! in practice.
+//! it on a CPU — provided the backend does not rewrite the arithmetic. Four
+//! things can, none of them is guaranteed by CubeCL, and every one of them
+//! fails on some backend in wide use. [`probe`] measures them on the live
+//! device and [`Ctx`] finishes with a functional canary, so the answer is a
+//! measurement rather than an assumption. See [`cube::fma`] for the one that
+//! is recoverable, and the README for what the probes found on real hardware.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
+// Four lints that this crate's subject matter contradicts, rather than four
+// pieces of sloppiness:
+//
+// * `eq_op` — `(x - x) / (x - x)` is how glibc spells "raise invalid and
+//   return this machine's own NaN". Substituting a NaN constant gives the
+//   *positive* quiet NaN where a real division gives the negative one, and the
+//   sign of a NaN is part of a bit-exactness contract. `x != x` likewise.
+// * `excessive_precision` — the constants here are exact bit patterns, quoted
+//   at the precision that makes a product exact. Rounding one to its shortest
+//   round-tripping form destroys the property it was chosen for.
+// * `int_plus_one` — the reference algorithms classify inputs with wrapping
+//   unsigned arithmetic (`top - 1 >= 0x7ff - 1` is "not a positive normal").
+//   The "simpler" form clippy suggests is a different predicate on the
+//   wrapping case, which is the case that matters.
+// * `assign_op_pattern`, `manual_range_contains`, `collapsible_if` — `#[cube]`
+//   expands the body it is given, and the compound and range forms do not
+//   survive that expansion.
+#![allow(
+    clippy::eq_op,
+    clippy::excessive_precision,
+    clippy::int_plus_one,
+    clippy::assign_op_pattern,
+    clippy::manual_range_contains,
+    clippy::collapsible_if
+)]
 
 pub mod config;
 pub mod cube;

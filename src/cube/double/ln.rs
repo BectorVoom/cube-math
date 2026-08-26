@@ -207,7 +207,7 @@ pub fn fold(x: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
     // The mantissa, with the exponent replaced by zero: `m` in `[1, 2)`.
     let mut m = f64::reinterpret((bits & 0x000f_ffff_ffff_ffffu64) | 0x3ff0_0000_0000_0000u64);
     // Recentre onto `[sqrt(2)/2, sqrt(2))`, where the series is shortest.
-    if m > 1.4142135623730951 {
+    if m > std::f64::consts::SQRT_2 {
         m = m * 0.5;
         k += 1i32;
     }

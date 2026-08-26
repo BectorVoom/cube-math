@@ -83,7 +83,7 @@ pub fn bit_exact(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> f64 {
 }
 
 /// The shared main path: `(tmp, sbits, ki)`, so the caller can choose between
-/// the one-instruction tail and [`specialcase`].
+/// the one-instruction tail and [`specialcase()`].
 #[cube]
 pub fn core(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> (f64, u64, u64) {
     let kd_s = fma64(x, t::INVLN2N, t::SHIFT, fk);

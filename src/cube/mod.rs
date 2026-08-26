@@ -31,6 +31,14 @@
 //! * **Subnormals.** Flushing them to zero would change `exp` near the bottom
 //!   of its range. [`crate::probe`] checks this too.
 
+// A `#[cube]` local that several branches assign has to be *initialised* from
+// a runtime value first: the macro turns a literal initialiser into a comptime
+// constant, and assigning a runtime value to it afterwards is a type error. So
+// the kernels open with `let mut out = <some real expression>` and then
+// overwrite it on every path, which the compiler reads as a dead store. It is
+// not one; it is the only spelling the macro accepts.
+#![allow(unused_assignments)]
+
 pub mod bits;
 pub mod double;
 pub mod exact;

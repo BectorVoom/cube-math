@@ -3,7 +3,7 @@
 //! Every constant in here is an `f64`. That is the algorithm, not an
 //! oversight: the platform's `expf`, `logf`, `log2f` and `powf` all do their
 //! arithmetic in double precision over a small table and round once at the
-//! end. Reproducing that is what makes [`crate::kernels::single`] bit-exact,
+//! end. Reproducing that is what makes the single-precision kernels bit-exact,
 //! and widening to `f64xN` first is what makes it vectorised rather than a
 //! scalar loop.
 

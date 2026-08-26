@@ -9,7 +9,7 @@
 //!
 //! Every constant here is an `f64`, and deliberately so: the single-precision
 //! routines evaluate in double precision and round once at the end. See
-//! [`crate::kernels::single`].
+//! the single-precision kernels.
 //!
 //! Values are exact bit patterns; the trailing comment is the upstream
 //! hex-float spelling.

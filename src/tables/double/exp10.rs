@@ -54,7 +54,7 @@ pub const THRESH: u32 = 0x41;
 
 /// `(ln 10)^k / k!` for `k` in `1..=13`, the Taylor coefficients of `10^r`.
 ///
-/// For the table-free [`crate::policy::Fast`] path only. Truncating here
+/// For the table-free [`crate::Accuracy::Fast`] path only. Truncating here
 /// leaves a relative error of `(r ln 10)^14 / 14!`, which at the reduction's
 /// worst case `|r| = log10(2)/2` is about `6.5e-18`.
 pub static G: [f64; 13] = [

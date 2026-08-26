@@ -52,7 +52,7 @@ use super::asincos_data::ASNCS;
 /// four slots of nothing, to round the row up to 128 bytes.
 ///
 /// The padding is not waste, it is alignment. A block-loading
-/// [`Simd::gather_run`](crate::simd::Simd::gather_run) reads each row as two
+/// a run of adjacent slots reads each row as two
 /// 64-byte vectors; at a 96-byte stride half the rows start mid-cache-line and
 /// *every* one of those loads is split across two lines. At 128 bytes, with
 /// the table itself 64-byte aligned, no load ever splits.

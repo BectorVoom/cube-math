@@ -191,7 +191,7 @@ pub mod $mod {
         select(x >= y || (!is_nan(x) && is_nan(y)), x, y)
     }
 
-    /// The smaller of `x` and `y`, ignoring NaN. See [`fmax`] for the NaN and
+    /// The smaller of `x` and `y`, ignoring NaN. See [`fmax()`] for the NaN and
     /// signed-zero conventions.
     #[cube]
     pub fn fmin(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
@@ -264,7 +264,7 @@ pub mod $mod {
     ///
     /// C defines `scalbn` and `ldexp` to compute the same thing wherever
     /// `FLT_RADIX` is 2, and glibc makes the second a literal alias of the
-    /// first. So this is [`ldexp`], not a second algorithm.
+    /// first. So this is [`ldexp()`], not a second algorithm.
     #[cube]
     pub fn scalbn(x: $f, n: $f, #[comptime] cfg: crate::config::Config) -> $f {
         ldexp(x, n, cfg)
@@ -303,7 +303,7 @@ pub mod $mod {
     /// `x == frac * 2^exp`.
     ///
     /// The exponent comes back in a float lane, for the same reason
-    /// [`ldexp`]'s argument arrives in one, and it is always an exact small
+    /// [`ldexp()`]'s argument arrives in one, and it is always an exact small
     /// integer.
     #[cube]
     pub fn frexp(x: $f, #[comptime] _cfg: crate::config::Config) -> ($f, $f) {
@@ -379,7 +379,7 @@ pub mod $mod {
     /// The IEEE-754 remainder: `x - y * n` with `n` the nearest integer to
     /// `x / y`, ties to even.
     ///
-    /// Differs from [`fmod`] only in how the quotient is rounded — nearest
+    /// Differs from [`fmod()`] only in how the quotient is rounded — nearest
     /// rather than towards zero — so the result can take either sign and
     /// satisfies `|r| <= |y| / 2`.
     #[cube]
@@ -402,7 +402,7 @@ pub mod $mod {
 
     /// `(fmod(x, y), the quotient is odd)`.
     ///
-    /// The shared core of [`fmod`] and [`remainder`], and it is exact for a
+    /// The shared core of [`fmod()`] and [`remainder()`], and it is exact for a
     /// reason worth stating: the divisor `d` only ever takes values
     /// `|y| * 2^j`, so doubling and halving it are exact; and a subtraction
     /// only happens when `d <= r < 2d`, where Sterbenz's lemma makes `r - d`
@@ -454,7 +454,7 @@ pub mod $mod {
         (out, odd)
     }
 
-    /// [`copysign`] in the two-argument kernel shape.
+    /// [`copysign()`] in the two-argument kernel shape.
     #[cube]
     pub fn copysign_fn(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
         copysign(x, y)
@@ -463,13 +463,13 @@ pub mod $mod {
     /// `x` reduced modulo `y`, together with the low bits of the quotient.
     ///
     /// Returns `(remainder, quotient)`, where the remainder is exactly
-    /// [`remainder`]'s and the quotient carries the sign of `x / y` and the low
+    /// [`remainder()`]'s and the quotient carries the sign of `x / y` and the low
     /// three bits of `|x / y|` rounded to nearest. C passes the quotient
     /// through an `int *`; here it comes back in a float lane, like
-    /// [`frexp`]'s exponent, and is always a small exact integer in `-7..=7`.
+    /// [`frexp()`]'s exponent, and is always a small exact integer in `-7..=7`.
     ///
     /// A transcription of glibc's `s_remquo.c`: reduce modulo `8y` once with
-    /// [`fmod`], then subtract off `4y`, `2y` and `y` in turn, counting as it
+    /// [`fmod()`], then subtract off `4y`, `2y` and `y` in turn, counting as it
     /// goes. Every step is exact — Sterbenz again — so this agrees with the
     /// platform by construction rather than by measurement.
     #[cube]

@@ -6,7 +6,7 @@
 //! Copyright (c) 2018-2023 Arm Limited, SPDX-License-Identifier:
 //! `MIT OR Apache-2.0 WITH LLVM-exception`. Byte-identical to the table glibc
 //! compiles into `__ieee754_exp_fma` / `__ieee754_exp2`, which is what lets
-//! [`crate::policy::BitExact`] mean *bit*-exact and not merely accurate.
+//! [`crate::Accuracy::BitExact`] mean *bit*-exact and not merely accurate.
 //!
 //! Values are exact bit patterns; the trailing comment is the upstream
 //! hex-float spelling.

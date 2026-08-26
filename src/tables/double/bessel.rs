@@ -6,7 +6,7 @@
 //! Copyright (c) 1993 Sun Microsystems, Inc., permission to use granted
 //! provided this notice is preserved. glibc still runs this code for the
 //! Bessel family, so reproducing its schedule is what makes
-//! [`crate::policy::BitExact`] bit-exact here.
+//! [`crate::Accuracy::BitExact`] bit-exact here.
 //!
 //! Values are exact bit patterns; fdlibm's own decimal spellings carry enough
 //! digits to round-trip, and the generator converts them rather than trusting
