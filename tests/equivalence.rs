@@ -78,6 +78,8 @@ fn suite_f64<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
     ported!("ln", Ln, Ln, 2.0, sweep_f64(1e300));
     ported!("log2", Log2, Log2, 2.0, sweep_f64(1e300));
     ported!("log10", Log10, Log10, 2.0, sweep_f64(1e300));
+    ported!("expm1", Expm1, Expm1, 2.0, sweep_f64(710.0));
+    ported!("log1p", Log1p, Log1p, 3.0, sweep_f64(1e300));
 
     check_ulp(
         backend,

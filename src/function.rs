@@ -533,6 +533,25 @@ math_fn1! {
 }
 
 math_fn1! {
+    /// `e^x - 1`, accurate for small `x`.
+    ///
+    /// `BitExact` reproduces glibc's `__expm1_fma`, Estrin's scheme and all
+    /// three of its fused operations included.
+    name: Expm1,
+    module: expm1,
+    f64: crate::cube::double::expm1::expm1,
+}
+
+math_fn1! {
+    /// `ln(1 + x)`, accurate for small `x`.
+    ///
+    /// `BitExact` reproduces glibc's `__log1p_fma`.
+    name: Log1p,
+    module: log1p,
+    f64: crate::cube::double::log1p::log1p,
+}
+
+math_fn1! {
     /// `2^x`.
     ///
     /// `BitExact` reproduces glibc's `__ieee754_exp2`, which — unlike `exp` —
