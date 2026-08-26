@@ -273,3 +273,44 @@ pub fn ulp_diff(a: f64, b: f64) -> f64 {
     let ulp = (2.0f64).powi(e - 52);
     if ulp == 0.0 { 0.0 } else { (a - b).abs() / ulp }
 }
+
+/// Check a kernel against a reference to within `limit` ulp.
+///
+/// What the `Fast` policy is held to: it makes no bit-exactness claim, so the
+/// suite checks the bound each kernel documents. Non-finite results still have
+/// to agree exactly — an approximation is allowed to be a little off, not to
+/// invent an infinity.
+pub fn check_ulp_f64(
+    backend: &str,
+    name: &str,
+    device: impl Fn(&[f64]) -> Vec<f64>,
+    reference: impl Fn(f64) -> f64,
+    xs: &[f64],
+    limit: f64,
+) {
+    let got = device(xs);
+    assert_eq!(got.len(), xs.len(), "[{backend}] {name}: wrong output length");
+    let mut worst = 0.0f64;
+    let mut at = f64::NAN;
+    let mut bad = Vec::new();
+    for (x, &g) in xs.iter().zip(got.iter()) {
+        let want = reference(*x);
+        if !want.is_finite() || want == 0.0 {
+            if !same_f64(g, want) && bad.len() < 8 {
+                bad.push(format!("  x = {x:e}: got {g:e}, want {want:e} (special)"));
+            }
+            continue;
+        }
+        let u = ulp_diff(g, want);
+        if u > worst {
+            worst = u;
+            at = *x;
+        }
+    }
+    assert!(bad.is_empty(), "[{backend}] {name}: specials differ\n{}", bad.join("\n"));
+    assert!(
+        worst <= limit,
+        "[{backend}] {name}: {worst:.3} ulp at x = {at:e}, budget {limit}",
+    );
+    eprintln!("[{backend}] {name}: {worst:.3} ulp (budget {limit})");
+}

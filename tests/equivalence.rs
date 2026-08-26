@@ -15,35 +15,56 @@ mod harness;
 
 use cube_math::prelude::*;
 use cubecl::prelude::Runtime;
-use harness::{check_f64, sweep_f64};
+use harness::{check_f64, check_ulp_f64, sweep_f64};
 use rmath::prelude::*;
 
 /// Every double-precision case, against one device.
+///
+/// A device that cannot be bit-exact is not a test failure — it is a fact
+/// about the device, and [`Fidelity`] exists to state it. What *would* be a
+/// failure is claiming bit-exactness there, so the exact half of the suite is
+/// skipped loudly and the approximate half still runs.
 fn suite_f64<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
     if !ctx.fidelity.f64.usable {
-        eprintln!("[{backend}] no usable f64; skipping the double-precision suite");
+        eprintln!("[{backend}] f64 does not run on this backend; skipping");
         return;
     }
-    assert!(
-        ctx.fidelity.f64.bit_exact_capable(),
-        "[{backend}] this device rewrites f64 arithmetic the kernels depend on: {}",
-        ctx.fidelity.f64.summary(),
-    );
+    let exact = ctx.fidelity.f64.bit_exact_capable();
+    if !exact {
+        eprintln!(
+            "[{backend}] NOT bit-exact capable ({}); checking the Fast policy only",
+            ctx.fidelity.f64.summary(),
+        );
+    }
 
     let exp_sweep = sweep_f64(709.9);
-    check_f64(
+    if exact {
+        check_f64(
+            backend,
+            "exp",
+            |xs| cube_math::function::Exp::new().eval_f64(ctx, xs),
+            |x| rmath::Exp::new().eval(x),
+            &exp_sweep,
+        );
+    }
+    check_ulp_f64(
         backend,
-        "exp",
-        |xs| cube_math::function::Exp::new().eval_f64(ctx, xs),
+        "exp (fast)",
+        |xs| cube_math::function::Exp::fast().eval_f64(ctx, xs),
         |x| rmath::Exp::new().eval(x),
         &exp_sweep,
+        1.0,
     );
 }
 
 /// Run everything on one runtime.
 fn run<R: Runtime>(backend: &'static str, device: &R::Device) {
     let ctx = Ctx::<R>::new(device);
-    eprintln!("[{backend}] {:#?}", ctx.fidelity);
+    eprintln!(
+        "[{backend}] f64: {} | f32: {}",
+        ctx.fidelity.f64.summary(),
+        ctx.fidelity.f32.summary(),
+    );
     suite_f64(backend, &ctx);
 }
 

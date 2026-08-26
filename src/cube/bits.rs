@@ -51,3 +51,46 @@ pub fn top12(x: f64) -> u32 {
 pub fn top9(x: f32) -> u32 {
     u32::reinterpret(x) >> 23u32
 }
+
+/// Positive infinity, built from its bit pattern.
+///
+/// Not `f64::INFINITY`. A Rust constant reaches the backend as a literal, and
+/// WGSL has no spelling for an infinite one — `f64(inf)` is not valid source,
+/// so a kernel mentioning `f64::INFINITY` fails to compile, and `wgpu` reports
+/// that by leaving the output buffer untouched rather than by returning an
+/// error. Assembling it from bits works on every backend and is exact by
+/// construction.
+#[cube]
+pub fn inf64() -> f64 {
+    f64::reinterpret(0x7ff0_0000_0000_0000u64)
+}
+
+/// Negative infinity. See [`inf64`].
+#[cube]
+pub fn neg_inf64() -> f64 {
+    f64::reinterpret(0xfff0_0000_0000_0000u64)
+}
+
+/// A quiet NaN. See [`inf64`].
+#[cube]
+pub fn nan64() -> f64 {
+    f64::reinterpret(0x7ff8_0000_0000_0000u64)
+}
+
+/// Positive infinity, single precision. See [`inf64`].
+#[cube]
+pub fn inf32() -> f32 {
+    f32::reinterpret(0x7f80_0000u32)
+}
+
+/// Negative infinity, single precision. See [`inf64`].
+#[cube]
+pub fn neg_inf32() -> f32 {
+    f32::reinterpret(0xff80_0000u32)
+}
+
+/// A quiet NaN, single precision. See [`inf64`].
+#[cube]
+pub fn nan32() -> f32 {
+    f32::reinterpret(0x7fc0_0000u32)
+}

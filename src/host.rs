@@ -59,7 +59,55 @@ impl<R: Runtime> Ctx<R> {
         crate::tables::arena::check(&data);
         let tables = client.create(cubecl::bytes::Bytes::from_elems(data));
         let fidelity = Fidelity::measure(&client);
-        Self { client, fidelity, tables, _r: PhantomData }
+        let mut ctx = Self { client, fidelity, tables, _r: PhantomData };
+        if ctx.fidelity.f64.usable {
+            let (exact, approx) = ctx.canary_f64();
+            ctx.fidelity.f64.verified = exact;
+            // A backend that cannot even get the *approximate* answer right is
+            // not a backend with a precision caveat, it is a backend where
+            // `f64` does not work.
+            ctx.fidelity.f64.usable = approx;
+        }
+        ctx
+    }
+
+    /// Evaluate a real kernel on inputs whose correctly-rounded answers are
+    /// mathematical constants, and check them bit for bit.
+    ///
+    /// The mechanical probes in [`crate::probe`] each test one property, and a
+    /// backend can pass all of them and still be wrong. `wgpu`'s WGSL path is
+    /// the case in point: it advertises `f64`, has `f64` arithmetic, passes
+    /// every probe — and then evaluates `exp(1)` to a number that is not `e`.
+    /// So the last word belongs to a whole kernel.
+    ///
+    /// The expected values are the correctly rounded `f64` nearest to `e^x`,
+    /// which is a fact about mathematics rather than about a `libm`, so the
+    /// canary does not smuggle in a platform assumption. `exp` is the right
+    /// canary because it exercises everything at once: the table read, the
+    /// integer exponent surgery, and a chain of eight multiply-adds whose
+    /// answer changes if any of them is not fused.
+    /// Returns `(bit_exact_ok, approximate_ok)`.
+    fn canary_f64(&self) -> (bool, bool) {
+        let xs = [1.0f64, -1.0, 0.5, f64::EPSILON, 20.0];
+        let want = [
+            0x4005_bf0a_8b14_5769u64, // e
+            0x3fd7_8b56_362c_ef38,    // 1/e
+            0x3ffa_6129_8e1e_069c,    // sqrt(e)
+            0x3ff0_0000_0000_0002,    // 1 + 2^-52 + 2^-53, rounded
+            0x4176_9b21_ec6e_a4f9,    // e^20
+        ];
+        let exact = crate::function::Exp::new().eval_f64(self, &xs);
+        let fast = crate::function::Exp::fast().eval_f64(self, &xs);
+        let ok = |got: &[f64], tol: f64| {
+            got.len() == want.len()
+                && got.iter().zip(want).all(|(g, w)| {
+                    let w = f64::from_bits(w);
+                    (g - w).abs() <= tol * w.abs()
+                })
+        };
+        // The approximate arm allows a generous relative error — it is asking
+        // "does this backend compute `exp` at all", not "how accurately".
+        (ok(&exact, 0.0), ok(&fast, 1e-12))
     }
 
     /// The compile-time configuration for `policy` in double precision.

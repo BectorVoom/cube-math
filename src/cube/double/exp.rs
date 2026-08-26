@@ -18,6 +18,7 @@
 use cubecl::prelude::*;
 
 use crate::config::Config;
+use crate::cube::bits::inf64;
 use crate::cube::fma::{FmaKind, fma64};
 use crate::tables::arena::OFF_EXP;
 use crate::tables::double::exp as t;
@@ -48,12 +49,13 @@ pub fn exp(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
 pub fn bit_exact(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> f64 {
     let bits = u64::reinterpret(x);
     let abstop = u32::cast_from(bits >> 52u64) & 0x7ffu32;
-    let mut out = f64::new(0.0f32);
+    // The initial value is the `|x| < 2^-54` answer, where `e^x` rounds to
+    // `1 + x` — which is also the `x == 0` case and the only place a subnormal
+    // input can reach. Every other branch overwrites it.
+    let mut out = 1.0 + x;
 
     if abstop < 0x3c9u32 {
-        // |x| < 2^-54: `e^x` rounds to `1 + x`. Also the `x == 0` case, and
-        // the only place a subnormal input can reach.
-        out = 1.0 + x;
+        // Already correct.
     } else if abstop >= 0x409u32 {
         // |x| >= 1024, or non-finite.
         if bits == 0xfff0_0000_0000_0000u64 {
@@ -63,7 +65,7 @@ pub fn bit_exact(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> f64 {
         } else if bits >> 63u64 != 0u64 {
             out = 0.0; // genuine underflow
         } else {
-            out = f64::INFINITY; // genuine overflow
+            out = inf64(); // genuine overflow
         }
     } else {
         let (tmp, sbits, ki) = core(x, tab, fk);
@@ -111,7 +113,9 @@ pub fn core(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> (f64, u64, u64
 /// bit-exactness.
 #[cube]
 pub fn specialcase(tmp: f64, sbits: u64, ki: u64, #[comptime] fk: FmaKind) -> f64 {
-    let mut out = f64::new(0.0f32);
+    // Initialised to the `k > 0` arm's shape so that the value is never read
+    // uninitialised; both arms assign.
+    let mut out = tmp;
     if ki & 0x8000_0000u64 == 0u64 {
         // k > 0: the scale's exponent may have overflowed by up to 460.
         let scale = f64::reinterpret(sbits - (1009u64 << 52u64));
@@ -193,7 +197,7 @@ pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
             if x != x {
                 out = x + x;
             } else if x > 709.782712893384 {
-                out = f64::INFINITY;
+                out = inf64();
             } else if x < -745.1332191019411 {
                 out = 0.0;
             }

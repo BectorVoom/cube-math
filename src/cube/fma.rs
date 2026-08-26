@@ -185,12 +185,21 @@ pub fn round_odd(h: f64, l: f64) -> f64 {
 /// determined by the dominant term alone.
 #[cube]
 pub fn fma_f64(a: f64, b: f64, c: f64) -> f64 {
-    let p = a * b;
-    let mut out = p + c;
-    // Non-finite, or a zero product: `a * b + c` is already the IEEE answer,
-    // because the second rounding can only bite when `a * b` is finite,
-    // nonzero and inexact.
-    if is_finite(p) && is_finite(c) && p != 0.0 {
+    let mut out = a * b + c;
+    // When either factor is zero or not finite, `a * b + c` is already the
+    // IEEE answer: the exact product is then a special value that propagates
+    // the same way through both forms, or an exact zero, and neither leaves
+    // the second rounding anything to discard.
+    if is_finite(a) && is_finite(b) && a != 0.0 && b != 0.0 {
+        if !is_finite(c) {
+            // A finite product plus an infinity is that infinity — but `a * b`
+            // may itself overflow to an infinity of the opposite sign, and
+            // `inf + -inf` is NaN. So take `c` directly. (A NaN `c` falls out
+            // of this too: `c` is the answer either way.)
+            out = c;
+        }
+    }
+    if is_finite(a) && is_finite(b) && is_finite(c) && a != 0.0 && b != 0.0 {
         let (am, ka) = to_unit(a);
         let (bm, kb) = to_unit(b);
         let k = ka + kb;
@@ -212,9 +221,29 @@ pub fn fma_f64(a: f64, b: f64, c: f64) -> f64 {
             let (uh, ul) = two_product(am, bm);
             let (th, tl) = two_sum(cs, uh);
             let (vh, vl) = two_sum(ul, tl);
+            // `a' b' + c' = th + vh + vl` exactly. Rounding `vh + vl` to odd
+            // and then `th + that` to nearest gives the correctly rounded sum
+            // of the three — that is the round-to-odd theorem.
             let z = round_odd(vh, vl);
             let (rh, rl) = two_sum(th, z);
-            out = scalbn(round_odd(rh, rl), k);
+
+            // `rh` is the answer in the scaled frame, and scaling back by a
+            // power of two is exact for a normal result — so there, `rh` is
+            // the whole story.
+            //
+            // A *subnormal* result is not. `scalbn` would have to round, and
+            // `rh` has already been rounded once, which is one rounding too
+            // many. Round-to-odd does not rescue this one either: it needs the
+            // intermediate to carry at least two more bits than the target,
+            // and a result at the top of the subnormal range has only 52 bits
+            // to `rh`'s 53. So the subnormal case is rounded directly onto the
+            // target grid instead, with `rl` breaking the ties that are not
+            // really ties.
+            if exponent_of(rh) + k < -1022i32 {
+                out = round_to_subnormal_grid(rh, rl, k);
+            } else {
+                out = scalbn(rh, k);
+            }
         }
     }
     out
@@ -238,6 +267,42 @@ pub fn fma_f32(a: f32, b: f32, c: f32) -> f32 {
     let prod = pa * pb; // exact
     let (sum, err) = two_sum(prod, pc);
     f32::cast_from(round_odd(sum, err))
+}
+
+/// Round `(rh + rl) * 2^k` onto the subnormal grid, correctly.
+///
+/// The grid is `2^-1074`, so the trick is to measure `rh` *in grid units*:
+/// `w = rh * 2^(1074 + k)` is exact (the result being subnormal bounds `|w|`
+/// below `2^52`), and the problem becomes rounding a `f64` to a nearby
+/// integer, which is exact arithmetic all the way down.
+///
+/// `rl` matters in exactly one place. When `w` lands on a half-integer the
+/// grid rounding is a tie, and ties-to-even would pick a neighbour without
+/// knowing that the true value is not actually on the midpoint — `rl` says
+/// which side it is on, and a nonzero `rl` therefore settles the tie in its own
+/// direction rather than by parity.
+#[cube]
+pub fn round_to_subnormal_grid(rh: f64, rl: f64, k: i32) -> f64 {
+    // `rh` in units of the target grid.
+    let w = scalbn(rh, 1074i32 + k);
+    let f = f64::floor(w);
+    let d = w - f; // in [0, 1), exact
+    let up = f + 1.0;
+    // Ties to even, except where `rl` overrules — see above.
+    let tie_even = select(is_odd_integer(f), up, f);
+    let tie = select(rl > 0.0, up, select(rl < 0.0, f, tie_even));
+    let q = select(d > 0.5, up, select(d < 0.5, f, tie));
+    // A result that underflows all the way to zero still carries the sign of
+    // the exact value, which the grid arithmetic has thrown away — `floor` of
+    // a tiny negative is `-1`, and rounding it back up lands on `+0`.
+    copysign_f64(scalbn(q, -1074i32), select(rh != 0.0, rh, rl))
+}
+
+/// True when `f` is an odd integer. `f` must be an integral `f64` with
+/// `|f| <= 2^52`, which is what [`round_to_subnormal_grid`] hands it.
+#[cube]
+pub fn is_odd_integer(f: f64) -> bool {
+    f - 2.0 * f64::floor(f * 0.5) != 0.0
 }
 
 // ---------------------------------------------------------------------------
