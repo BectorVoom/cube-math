@@ -15,7 +15,7 @@ mod harness;
 
 use cube_math::prelude::*;
 use cubecl::prelude::Runtime;
-use harness::{check_f64, check_ulp_f64, sweep_f64};
+use harness::{check, check2, check2_pair, check_pair, check_ulp, sweep2_f32, sweep2_f64, sweep_f32, sweep_f64};
 use rmath::prelude::*;
 
 /// Every double-precision case, against one device.
@@ -39,7 +39,7 @@ fn suite_f64<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
 
     let exp_sweep = sweep_f64(709.9);
     if exact {
-        check_f64(
+        check(
             backend,
             "exp",
             |xs| cube_math::function::Exp::new().eval_f64(ctx, xs),
@@ -47,7 +47,9 @@ fn suite_f64<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
             &exp_sweep,
         );
     }
-    check_ulp_f64(
+    exact_family_f64(backend, ctx);
+
+    check_ulp(
         backend,
         "exp (fast)",
         |xs| cube_math::function::Exp::fast().eval_f64(ctx, xs),
@@ -55,6 +57,105 @@ fn suite_f64<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
         &exp_sweep,
         1.0,
     );
+}
+
+/// The functions IEEE-754 pins down exactly.
+///
+/// These need no fused multiply-add and make no claim about a particular
+/// `libm`, so they run on every backend that can do `f64` at all — including
+/// the ones the bit-exact transcendentals have to skip.
+macro_rules! exact_family {
+    ($fname:ident, $ty:ty, $eval:ident, $sweep:expr, $sweep2:expr) => {
+fn $fname<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
+    use cube_math::function as f;
+
+    let xs: Vec<$ty> = $sweep;
+    macro_rules! unary {
+        ($name:literal, $cube:ident, $rm:ident) => {
+            check(
+                backend,
+                concat!($name, " ", stringify!($ty)),
+                |v| f::$cube::new().$eval(ctx, v),
+                |x| rmath::$rm::new().eval(x),
+                &xs,
+            );
+        };
+    }
+    unary!("floor", Floor, Floor);
+    unary!("ceil", Ceil, Ceil);
+    unary!("trunc", Trunc, Trunc);
+    unary!("round", Round, Round);
+    unary!("rint", Rint, Rint);
+    unary!("sqrt", Sqrt, Sqrt);
+    unary!("abs", Abs, Abs);
+    unary!("ilogb", Ilogb, Ilogb);
+
+    let (a, b): (Vec<$ty>, Vec<$ty>) = $sweep2;
+    macro_rules! binary {
+        ($name:literal, $cube:ident, $rm:ident) => {
+            check2(
+                backend,
+                concat!($name, " ", stringify!($ty)),
+                |p, q| f::$cube::new().$eval(ctx, p, q),
+                |x, y| rmath::$rm::new().eval(x, y),
+                &a,
+                &b,
+            );
+        };
+    }
+    binary!("copysign", CopySign, CopySign);
+    binary!("fdim", Fdim, Fdim);
+    binary!("fmax", Fmax, Fmax);
+    binary!("fmin", Fmin, Fmin);
+    binary!("fmod", Fmod, Fmod);
+    binary!("remainder", Remainder, Remainder);
+    binary!("nextafter", NextAfter, NextAfter);
+    binary!("ldexp", Ldexp, Ldexp);
+    binary!("scalbn", Scalbn, Scalbn);
+
+    check_pair(
+        backend,
+        concat!("frexp ", stringify!($ty)),
+        |v| f::Frexp::new().$eval(ctx, v),
+        |x| rmath::Frexp::new().eval(x),
+        &xs,
+    );
+    check_pair(
+        backend,
+        concat!("modf ", stringify!($ty)),
+        |v| f::Modf::new().$eval(ctx, v),
+        |x| rmath::Modf::new().eval(x),
+        &xs,
+    );
+    check2_pair(
+        backend,
+        concat!("remquo ", stringify!($ty)),
+        |p, q| f::Remquo::new().$eval(ctx, p, q),
+        |x, y| rmath::Remquo::new().eval(x, y),
+        &a,
+        &b,
+    );
+}
+    };
+}
+
+exact_family!(exact_family_f64, f64, eval_f64, sweep_f64(1000.0), sweep2_f64());
+exact_family!(exact_family_f32, f32, eval_f32, sweep_f32(1000.0), sweep2_f32());
+
+/// Every single-precision case, against one device.
+fn suite_f32<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
+    if !ctx.fidelity.f32.usable {
+        eprintln!("[{backend}] f32 does not run on this backend; skipping");
+        return;
+    }
+    if !ctx.fidelity.f32.bit_exact_capable() {
+        eprintln!(
+            "[{backend}] f32 NOT bit-exact capable ({}); skipping the exact suite",
+            ctx.fidelity.f32.summary(),
+        );
+        return;
+    }
+    exact_family_f32(backend, ctx);
 }
 
 /// Run everything on one runtime.
@@ -66,6 +167,7 @@ fn run<R: Runtime>(backend: &'static str, device: &R::Device) {
         ctx.fidelity.f32.summary(),
     );
     suite_f64(backend, &ctx);
+    suite_f32(backend, &ctx);
 }
 
 #[cfg(feature = "cpu")]

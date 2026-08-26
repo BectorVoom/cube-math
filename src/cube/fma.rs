@@ -32,6 +32,8 @@
 
 use cubecl::prelude::*;
 
+use crate::cube::bits::is_finite64 as is_finite;
+
 /// Which multiply-add a kernel should use.
 ///
 /// A comptime parameter, so a kernel built for [`FmaKind::Hardware`] contains
@@ -308,12 +310,6 @@ pub fn is_odd_integer(f: f64) -> bool {
 // ---------------------------------------------------------------------------
 // Small helpers.
 // ---------------------------------------------------------------------------
-
-/// True unless `x` is an infinity or a NaN.
-#[cube]
-pub fn is_finite(x: f64) -> bool {
-    (u64::reinterpret(x) >> 52u64) & 0x7ffu64 != 0x7ffu64
-}
 
 /// `|x|` with the sign of `y`.
 #[cube]

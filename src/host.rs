@@ -68,6 +68,9 @@ impl<R: Runtime> Ctx<R> {
             // `f64` does not work.
             ctx.fidelity.f64.usable = approx;
         }
+        if ctx.fidelity.f32.usable {
+            ctx.fidelity.f32.verified = ctx.canary_f32();
+        }
         ctx
     }
 
@@ -93,8 +96,8 @@ impl<R: Runtime> Ctx<R> {
             0x4005_bf0a_8b14_5769u64, // e
             0x3fd7_8b56_362c_ef38,    // 1/e
             0x3ffa_6129_8e1e_069c,    // sqrt(e)
-            0x3ff0_0000_0000_0002,    // 1 + 2^-52 + 2^-53, rounded
-            0x4176_9b21_ec6e_a4f9,    // e^20
+            0x3ff0_0000_0000_0001,    // exp(2^-52), which rounds to 1 + 2^-52
+            0x41bc_eb08_8b68_e804,    // e^20
         ];
         let exact = crate::function::Exp::new().eval_f64(self, &xs);
         let fast = crate::function::Exp::fast().eval_f64(self, &xs);
@@ -108,6 +111,22 @@ impl<R: Runtime> Ctx<R> {
         // The approximate arm allows a generous relative error — it is asking
         // "does this backend compute `exp` at all", not "how accurately".
         (ok(&exact, 0.0), ok(&fast, 1e-12))
+    }
+
+    /// The single-precision canary.
+    ///
+    /// `exp` has no `f32` kernel yet, so this leans on the exact family, whose
+    /// answers are pinned by IEEE-754 rather than by any `libm`: a square root
+    /// that is correctly rounded, a tie that rounds to even, and a subnormal
+    /// that survives being scaled.
+    fn canary_f32(&self) -> bool {
+        let xs = [2.0f32, 0.5, 2.5, f32::from_bits(1)];
+        let sqrt = crate::function::Sqrt::new().eval_f32(self, &xs);
+        let rint = crate::function::Rint::new().eval_f32(self, &xs);
+        sqrt[0].to_bits() == 2.0f32.sqrt().to_bits()
+            && sqrt[3].to_bits() == f32::from_bits(1).sqrt().to_bits()
+            && rint[1].to_bits() == 0.0f32.to_bits()
+            && rint[2].to_bits() == 2.0f32.to_bits()
     }
 
     /// The compile-time configuration for `policy` in double precision.

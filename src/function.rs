@@ -143,6 +143,353 @@ macro_rules! math_fn1 {
     };
 }
 
+
+/// One argument in, one out, for a kernel that reads no table.
+///
+/// The exact functions need no table, and binding one they never index would
+/// put a buffer in every launch for nothing. The launch signature still has
+/// it — one signature keeps the host side uniform — but the kernel does not
+/// hand it on.
+macro_rules! math_fn1_plain {
+    (
+        $(#[$doc:meta])*
+        name: $name:ident,
+        module: $module:ident,
+        f64: $k64:path,
+        f32: $k32:path $(,)?
+    ) => {
+        math_fn1!(@object $(#[$doc])* $name);
+        #[doc = concat!("Launch kernels for [`", stringify!($name), "`].")]
+        pub mod $module {
+            use super::*;
+
+            #[doc = concat!("`", stringify!($name), "`, double precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k64(inp: &Array<f64>, out: &mut Array<f64>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < inp.len() {
+                    let _ = tab[0];
+                    out[ABSOLUTE_POS] = $k64(inp[ABSOLUTE_POS], cfg);
+                }
+            }
+
+            #[doc = concat!("`", stringify!($name), "`, single precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k32(inp: &Array<f32>, out: &mut Array<f32>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < inp.len() {
+                    let _ = tab[0];
+                    out[ABSOLUTE_POS] = $k32(inp[ABSOLUTE_POS], cfg);
+                }
+            }
+        }
+        math_fn1!(@eval $name, $module, f64, k64, eval_f64, eval_f64_into, config_f64);
+        math_fn1!(@eval $name, $module, f32, k32, eval_f32, eval_f32_into, config_f32);
+    };
+}
+
+/// One argument in, two out, for a kernel that reads no table.
+macro_rules! math_fn1_pair_plain {
+    (
+        $(#[$doc:meta])*
+        name: $name:ident,
+        module: $module:ident,
+        f64: $k64:path,
+        f32: $k32:path $(,)?
+    ) => {
+        math_fn1!(@object $(#[$doc])* $name);
+        #[doc = concat!("Launch kernels for [`", stringify!($name), "`].")]
+        pub mod $module {
+            use super::*;
+
+            #[doc = concat!("`", stringify!($name), "`, double precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k64(inp: &Array<f64>, o1: &mut Array<f64>, o2: &mut Array<f64>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < inp.len() {
+                    let _ = tab[0];
+                    let (a, b) = $k64(inp[ABSOLUTE_POS], cfg);
+                    o1[ABSOLUTE_POS] = a;
+                    o2[ABSOLUTE_POS] = b;
+                }
+            }
+
+            #[doc = concat!("`", stringify!($name), "`, single precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k32(inp: &Array<f32>, o1: &mut Array<f32>, o2: &mut Array<f32>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < inp.len() {
+                    let _ = tab[0];
+                    let (a, b) = $k32(inp[ABSOLUTE_POS], cfg);
+                    o1[ABSOLUTE_POS] = a;
+                    o2[ABSOLUTE_POS] = b;
+                }
+            }
+        }
+        math_fn1_pair!(@eval $name, $module, f64, k64, eval_f64, eval_f64_into, config_f64);
+        math_fn1_pair!(@eval $name, $module, f32, k32, eval_f32, eval_f32_into, config_f32);
+    };
+}
+
+/// Two arguments in, one out.
+macro_rules! math_fn2 {
+    (
+        $(#[$doc:meta])*
+        name: $name:ident,
+        module: $module:ident,
+        f64: $k64:path,
+        f32: $k32:path $(,)?
+    ) => {
+        math_fn1!(@object $(#[$doc])* $name);
+        #[doc = concat!("Launch kernels for [`", stringify!($name), "`].")]
+        pub mod $module {
+            use super::*;
+
+            #[doc = concat!("`", stringify!($name), "`, double precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k64(a: &Array<f64>, b: &Array<f64>, out: &mut Array<f64>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < out.len() {
+                    let _ = tab[0];
+                    out[ABSOLUTE_POS] = $k64(a[ABSOLUTE_POS], b[ABSOLUTE_POS], cfg);
+                }
+            }
+
+            #[doc = concat!("`", stringify!($name), "`, single precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k32(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < out.len() {
+                    let _ = tab[0];
+                    out[ABSOLUTE_POS] = $k32(a[ABSOLUTE_POS], b[ABSOLUTE_POS], cfg);
+                }
+            }
+        }
+        math_fn2!(@eval $name, $module, f64, k64, eval_f64, eval_f64_into, config_f64);
+        math_fn2!(@eval $name, $module, f32, k32, eval_f32, eval_f32_into, config_f32);
+    };
+
+    (@eval $name:ident, $module:ident, $ty:ty, $kern:ident, $eval:ident, $into:ident, $cfg:ident) => {
+        impl $name {
+            #[doc = concat!("Evaluate over two device buffers of `", stringify!($ty), "`.")]
+            ///
+            /// # Safety
+            /// `a`, `b` and `out` must each hold at least `n` elements.
+            #[allow(clippy::too_many_arguments)]
+            pub unsafe fn $into<R: Runtime>(
+                &self,
+                ctx: &Ctx<R>,
+                a: &cubecl::server::Handle,
+                b: &cubecl::server::Handle,
+                out: &cubecl::server::Handle,
+                n: usize,
+            ) {
+                let (count, dim) = ctx.geometry(n);
+                unsafe {
+                    $module::$kern::launch_unchecked::<R>(
+                        &ctx.client,
+                        count,
+                        dim,
+                        arg::<R>(a, n),
+                        arg::<R>(b, n),
+                        arg::<R>(out, n),
+                        ctx.tables_arg(),
+                        ctx.$cfg(self.policy),
+                    );
+                }
+            }
+
+            #[doc = concat!("Evaluate over two slices of `", stringify!($ty), "`.")]
+            ///
+            /// # Panics
+            /// If the two slices have different lengths.
+            pub fn $eval<R: Runtime>(&self, ctx: &Ctx<R>, a: &[$ty], b: &[$ty]) -> Vec<$ty> {
+                assert_eq!(a.len(), b.len(), "arguments must have the same length");
+                let n = a.len();
+                if n == 0 {
+                    return Vec::new();
+                }
+                let ah = ctx.upload(a);
+                let bh = ctx.upload(b);
+                let out = ctx.alloc::<$ty>(n);
+                unsafe { self.$into(ctx, &ah, &bh, &out, n) };
+                ctx.download(out, n)
+            }
+        }
+    };
+}
+
+/// One argument in, two out — `frexp`, `modf`, `sincos`.
+macro_rules! math_fn1_pair {
+    (
+        $(#[$doc:meta])*
+        name: $name:ident,
+        module: $module:ident,
+        f64: $k64:path,
+        f32: $k32:path $(,)?
+    ) => {
+        math_fn1!(@object $(#[$doc])* $name);
+        #[doc = concat!("Launch kernels for [`", stringify!($name), "`].")]
+        pub mod $module {
+            use super::*;
+
+            #[doc = concat!("`", stringify!($name), "`, double precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k64(inp: &Array<f64>, o1: &mut Array<f64>, o2: &mut Array<f64>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < inp.len() {
+                    let (a, b) = $k64(inp[ABSOLUTE_POS], tab, cfg);
+                    o1[ABSOLUTE_POS] = a;
+                    o2[ABSOLUTE_POS] = b;
+                }
+            }
+
+            #[doc = concat!("`", stringify!($name), "`, single precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k32(inp: &Array<f32>, o1: &mut Array<f32>, o2: &mut Array<f32>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < inp.len() {
+                    let (a, b) = $k32(inp[ABSOLUTE_POS], tab, cfg);
+                    o1[ABSOLUTE_POS] = a;
+                    o2[ABSOLUTE_POS] = b;
+                }
+            }
+        }
+        math_fn1_pair!(@eval $name, $module, f64, k64, eval_f64, eval_f64_into, config_f64);
+        math_fn1_pair!(@eval $name, $module, f32, k32, eval_f32, eval_f32_into, config_f32);
+    };
+
+    (@eval $name:ident, $module:ident, $ty:ty, $kern:ident, $eval:ident, $into:ident, $cfg:ident) => {
+        impl $name {
+            #[doc = concat!("Evaluate over a device buffer of `", stringify!($ty), "`, into two outputs.")]
+            ///
+            /// # Safety
+            /// `inp`, `o1` and `o2` must each hold at least `n` elements.
+            #[allow(clippy::too_many_arguments)]
+            pub unsafe fn $into<R: Runtime>(
+                &self,
+                ctx: &Ctx<R>,
+                inp: &cubecl::server::Handle,
+                o1: &cubecl::server::Handle,
+                o2: &cubecl::server::Handle,
+                n: usize,
+            ) {
+                let (count, dim) = ctx.geometry(n);
+                unsafe {
+                    $module::$kern::launch_unchecked::<R>(
+                        &ctx.client,
+                        count,
+                        dim,
+                        arg::<R>(inp, n),
+                        arg::<R>(o1, n),
+                        arg::<R>(o2, n),
+                        ctx.tables_arg(),
+                        ctx.$cfg(self.policy),
+                    );
+                }
+            }
+
+            #[doc = concat!("Evaluate over a slice of `", stringify!($ty), "`, returning both outputs.")]
+            pub fn $eval<R: Runtime>(&self, ctx: &Ctx<R>, xs: &[$ty]) -> (Vec<$ty>, Vec<$ty>) {
+                let n = xs.len();
+                if n == 0 {
+                    return (Vec::new(), Vec::new());
+                }
+                let inp = ctx.upload(xs);
+                let o1 = ctx.alloc::<$ty>(n);
+                let o2 = ctx.alloc::<$ty>(n);
+                unsafe { self.$into(ctx, &inp, &o1, &o2, n) };
+                (ctx.download(o1, n), ctx.download(o2, n))
+            }
+        }
+    };
+}
+
+/// Two arguments in, two out — `remquo`.
+macro_rules! math_fn2_pair {
+    (
+        $(#[$doc:meta])*
+        name: $name:ident,
+        module: $module:ident,
+        f64: $k64:path,
+        f32: $k32:path $(,)?
+    ) => {
+        math_fn1!(@object $(#[$doc])* $name);
+        #[doc = concat!("Launch kernels for [`", stringify!($name), "`].")]
+        pub mod $module {
+            use super::*;
+
+            #[doc = concat!("`", stringify!($name), "`, double precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k64(a: &Array<f64>, b: &Array<f64>, o1: &mut Array<f64>, o2: &mut Array<f64>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < a.len() {
+                    let _ = tab[0];
+                    let (p, q) = $k64(a[ABSOLUTE_POS], b[ABSOLUTE_POS], cfg);
+                    o1[ABSOLUTE_POS] = p;
+                    o2[ABSOLUTE_POS] = q;
+                }
+            }
+
+            #[doc = concat!("`", stringify!($name), "`, single precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k32(a: &Array<f32>, b: &Array<f32>, o1: &mut Array<f32>, o2: &mut Array<f32>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < a.len() {
+                    let _ = tab[0];
+                    let (p, q) = $k32(a[ABSOLUTE_POS], b[ABSOLUTE_POS], cfg);
+                    o1[ABSOLUTE_POS] = p;
+                    o2[ABSOLUTE_POS] = q;
+                }
+            }
+        }
+        math_fn2_pair!(@eval $name, $module, f64, k64, eval_f64, eval_f64_into, config_f64);
+        math_fn2_pair!(@eval $name, $module, f32, k32, eval_f32, eval_f32_into, config_f32);
+    };
+
+    (@eval $name:ident, $module:ident, $ty:ty, $kern:ident, $eval:ident, $into:ident, $cfg:ident) => {
+        impl $name {
+            #[doc = concat!("Evaluate over two device buffers of `", stringify!($ty), "`, into two outputs.")]
+            ///
+            /// # Safety
+            /// Every handle must hold at least `n` elements.
+            #[allow(clippy::too_many_arguments)]
+            pub unsafe fn $into<R: Runtime>(
+                &self,
+                ctx: &Ctx<R>,
+                a: &cubecl::server::Handle,
+                b: &cubecl::server::Handle,
+                o1: &cubecl::server::Handle,
+                o2: &cubecl::server::Handle,
+                n: usize,
+            ) {
+                let (count, dim) = ctx.geometry(n);
+                unsafe {
+                    $module::$kern::launch_unchecked::<R>(
+                        &ctx.client,
+                        count,
+                        dim,
+                        arg::<R>(a, n),
+                        arg::<R>(b, n),
+                        arg::<R>(o1, n),
+                        arg::<R>(o2, n),
+                        ctx.tables_arg(),
+                        ctx.$cfg(self.policy),
+                    );
+                }
+            }
+
+            #[doc = concat!("Evaluate over two slices of `", stringify!($ty), "`, returning both outputs.")]
+            ///
+            /// # Panics
+            /// If the two slices have different lengths.
+            pub fn $eval<R: Runtime>(&self, ctx: &Ctx<R>, a: &[$ty], b: &[$ty]) -> (Vec<$ty>, Vec<$ty>) {
+                assert_eq!(a.len(), b.len(), "arguments must have the same length");
+                let n = a.len();
+                if n == 0 {
+                    return (Vec::new(), Vec::new());
+                }
+                let ah = ctx.upload(a);
+                let bh = ctx.upload(b);
+                let o1 = ctx.alloc::<$ty>(n);
+                let o2 = ctx.alloc::<$ty>(n);
+                unsafe { self.$into(ctx, &ah, &bh, &o1, &o2, n) };
+                (ctx.download(o1, n), ctx.download(o2, n))
+            }
+        }
+    };
+}
+
 math_fn1! {
     /// `e^x`.
     ///
@@ -151,4 +498,174 @@ math_fn1! {
     name: Exp,
     module: exp,
     f64: crate::cube::double::exp::exp,
+}
+
+// ---------------------------------------------------------------------------
+// The functions IEEE-754 pins down exactly.
+//
+// Both policy axes are no-ops for every entry below: there is no approximation
+// to make cheaper and no special case to repair, because the special cases are
+// on the main path at no cost. They are listed with the same names and the
+// same shapes as the rest so that callers do not have to know which category a
+// function falls into.
+// ---------------------------------------------------------------------------
+
+math_fn1_plain! {
+    /// Largest integer not greater than `x`.
+    name: Floor,
+    module: floor,
+    f64: crate::cube::exact::double::floor,
+    f32: crate::cube::exact::single::floor,
+}
+
+math_fn1_plain! {
+    /// Smallest integer not less than `x`.
+    name: Ceil,
+    module: ceil,
+    f64: crate::cube::exact::double::ceil,
+    f32: crate::cube::exact::single::ceil,
+}
+
+math_fn1_plain! {
+    /// `x` truncated towards zero.
+    name: Trunc,
+    module: trunc,
+    f64: crate::cube::exact::double::trunc,
+    f32: crate::cube::exact::single::trunc,
+}
+
+math_fn1_plain! {
+    /// `x` rounded to the nearest integer, ties away from zero.
+    name: Round,
+    module: round,
+    f64: crate::cube::exact::double::round,
+    f32: crate::cube::exact::single::round,
+}
+
+math_fn1_plain! {
+    /// `x` rounded to the nearest integer, ties to even.
+    name: Rint,
+    module: rint,
+    f64: crate::cube::exact::double::rint,
+    f32: crate::cube::exact::single::rint,
+}
+
+math_fn1_plain! {
+    /// `sqrt(x)`, correctly rounded.
+    name: Sqrt,
+    module: sqrt,
+    f64: crate::cube::exact::double::sqrt,
+    f32: crate::cube::exact::single::sqrt,
+}
+
+math_fn1_plain! {
+    /// `|x|`.
+    name: Abs,
+    module: abs,
+    f64: crate::cube::exact::double::abs,
+    f32: crate::cube::exact::single::abs,
+}
+
+math_fn1_plain! {
+    /// The binary exponent of `x`, as an integer in a float lane.
+    name: Ilogb,
+    module: ilogb,
+    f64: crate::cube::exact::double::ilogb,
+    f32: crate::cube::exact::single::ilogb,
+}
+
+math_fn2! {
+    /// The magnitude of `x` with the sign of `y`.
+    name: CopySign,
+    module: copysign,
+    f64: crate::cube::exact::double::copysign_fn,
+    f32: crate::cube::exact::single::copysign_fn,
+}
+
+math_fn2! {
+    /// The positive difference: `x - y` if `x > y`, and `+0` otherwise.
+    name: Fdim,
+    module: fdim,
+    f64: crate::cube::exact::double::fdim,
+    f32: crate::cube::exact::single::fdim,
+}
+
+math_fn2! {
+    /// The larger of `x` and `y`, ignoring NaN.
+    name: Fmax,
+    module: fmax,
+    f64: crate::cube::exact::double::fmax,
+    f32: crate::cube::exact::single::fmax,
+}
+
+math_fn2! {
+    /// The smaller of `x` and `y`, ignoring NaN.
+    name: Fmin,
+    module: fmin,
+    f64: crate::cube::exact::double::fmin,
+    f32: crate::cube::exact::single::fmin,
+}
+
+math_fn2! {
+    /// `x * 2^n`, with `n` carried in a float lane.
+    name: Ldexp,
+    module: ldexp,
+    f64: crate::cube::exact::double::ldexp,
+    f32: crate::cube::exact::single::ldexp,
+}
+
+math_fn2! {
+    /// `x * 2^n`, under its other name. The same code as [`Ldexp`].
+    name: Scalbn,
+    module: scalbn,
+    f64: crate::cube::exact::double::scalbn,
+    f32: crate::cube::exact::single::scalbn,
+}
+
+math_fn2! {
+    /// `x` reduced modulo `y`, with the sign of `x`.
+    name: Fmod,
+    module: fmod,
+    f64: crate::cube::exact::double::fmod,
+    f32: crate::cube::exact::single::fmod,
+}
+
+math_fn2! {
+    /// The IEEE-754 remainder: `x - y * n`, with `n` the nearest integer to `x / y`.
+    name: Remainder,
+    module: remainder,
+    f64: crate::cube::exact::double::remainder,
+    f32: crate::cube::exact::single::remainder,
+}
+
+math_fn2! {
+    /// The next representable value after `x` in the direction of `y`.
+    name: NextAfter,
+    module: nextafter,
+    f64: crate::cube::exact::double::nextafter,
+    f32: crate::cube::exact::single::nextafter,
+}
+
+math_fn1_pair_plain! {
+    /// Split `x` into a significand in `[0.5, 1)` and a power of two.
+    name: Frexp,
+    module: frexp,
+    f64: crate::cube::exact::double::frexp,
+    f32: crate::cube::exact::single::frexp,
+}
+
+math_fn1_pair_plain! {
+    /// Split `x` into its fractional and integral parts, both with `x`'s sign.
+    name: Modf,
+    module: modf,
+    f64: crate::cube::exact::double::modf,
+    f32: crate::cube::exact::single::modf,
+}
+
+math_fn2_pair! {
+    /// `x` reduced modulo `y`, together with the low bits of the quotient.
+    name: Remquo,
+    module: remquo,
+    f64: crate::cube::exact::double::remquo,
+    f32: crate::cube::exact::single::remquo,
 }

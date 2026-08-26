@@ -52,6 +52,37 @@ pub fn top9(x: f32) -> u32 {
     u32::reinterpret(x) >> 23u32
 }
 
+/// True when `x` is NaN.
+///
+/// Read off the bits, not written as `x != x`. The IEEE definition is the
+/// clearer spelling, but it depends on `!=` being an *unordered* compare, and
+/// not every backend lowers it that way — CubeCL's CPU runtime emits an
+/// ordered compare, which answers `false` for a NaN and quietly turns every
+/// NaN test into a no-op. A magnitude above the infinity pattern is a NaN on
+/// every conforming device, with no comparison involved at all.
+#[cube]
+pub fn is_nan64(x: f64) -> bool {
+    (u64::reinterpret(x) & 0x7fff_ffff_ffff_ffffu64) > 0x7ff0_0000_0000_0000u64
+}
+
+/// True when `x` is NaN, single precision. See [`is_nan64`].
+#[cube]
+pub fn is_nan32(x: f32) -> bool {
+    (u32::reinterpret(x) & 0x7fff_ffffu32) > 0x7f80_0000u32
+}
+
+/// True unless `x` is an infinity or a NaN.
+#[cube]
+pub fn is_finite64(x: f64) -> bool {
+    (u64::reinterpret(x) & 0x7fff_ffff_ffff_ffffu64) < 0x7ff0_0000_0000_0000u64
+}
+
+/// True unless `x` is an infinity or a NaN, single precision.
+#[cube]
+pub fn is_finite32(x: f32) -> bool {
+    (u32::reinterpret(x) & 0x7fff_ffffu32) < 0x7f80_0000u32
+}
+
 /// Positive infinity, built from its bit pattern.
 ///
 /// Not `f64::INFINITY`. A Rust constant reaches the backend as a literal, and

@@ -18,7 +18,7 @@
 use cubecl::prelude::*;
 
 use crate::config::Config;
-use crate::cube::bits::inf64;
+use crate::cube::bits::{inf64, is_nan64};
 use crate::cube::fma::{FmaKind, fma64};
 use crate::tables::arena::OFF_EXP;
 use crate::tables::double::exp as t;
@@ -194,7 +194,7 @@ pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
         // resolved explicitly. `1 + x` covers both the tiny case and NaN.
         let abstop = u32::cast_from(u64::reinterpret(x) >> 52u64) & 0x7ffu32;
         if abstop >= 0x408u32 {
-            if x != x {
+            if is_nan64(x) {
                 out = x + x;
             } else if x > 709.782712893384 {
                 out = inf64();

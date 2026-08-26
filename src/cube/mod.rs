@@ -33,5 +33,6 @@
 
 pub mod bits;
 pub mod double;
+pub mod exact;
 pub mod fma;
 pub mod single;
