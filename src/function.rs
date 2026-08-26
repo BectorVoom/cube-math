@@ -313,6 +313,31 @@ macro_rules! math_fn2 {
     };
 }
 
+/// Two arguments in, one out, for a kernel that reads a table.
+macro_rules! math_fn2_tab {
+    (
+        $(#[$doc:meta])*
+        name: $name:ident,
+        module: $module:ident,
+        f64: $k64:path $(,)?
+    ) => {
+        math_fn1!(@object $(#[$doc])* $name);
+        #[doc = concat!("Launch kernels for [`", stringify!($name), "`].")]
+        pub mod $module {
+            use super::*;
+
+            #[doc = concat!("`", stringify!($name), "`, double precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k64(a: &Array<f64>, b: &Array<f64>, out: &mut Array<f64>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < out.len() {
+                    out[ABSOLUTE_POS] = $k64(a[ABSOLUTE_POS], b[ABSOLUTE_POS], tab, cfg);
+                }
+            }
+        }
+        math_fn2!(@eval $name, $module, f64, k64, eval_f64, eval_f64_into, config_f64);
+    };
+}
+
 /// One argument in, two out — `frexp`, `modf`, `sincos`.
 macro_rules! math_fn1_pair {
     (
@@ -549,6 +574,18 @@ math_fn1! {
     name: Log1p,
     module: log1p,
     f64: crate::cube::double::log1p::log1p,
+}
+
+math_fn2_tab! {
+    /// `x^y`.
+    ///
+    /// `BitExact` reproduces glibc's `__pow_fma`, which computes the logarithm
+    /// to better than double precision because an error of one ulp there
+    /// becomes an error of `y` ulp in the result. `Fast` keeps that
+    /// double-double product and drops only the tables.
+    name: Pow,
+    module: pow,
+    f64: crate::cube::double::pow::pow,
 }
 
 math_fn1! {

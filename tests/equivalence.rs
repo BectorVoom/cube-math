@@ -49,6 +49,45 @@ fn suite_f64<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
     }
     exact_family_f64(backend, ctx);
 
+    // `pow`, on a cross product: what breaks it is the relationship between
+    // base and exponent, not either alone.
+    {
+        let (pa, pb) = sweep2_f64();
+        if exact {
+            check2(
+                backend,
+                "pow",
+                |p, q| cube_math::function::Pow::new().eval_f64(ctx, p, q),
+                |x, y| rmath::Pow::new().eval(x, y),
+                &pa,
+                &pb,
+            );
+        }
+        // `Fast` is the same code here — see the kernel's module docs — so it
+        // is held to the same bit-exact standard rather than to a bound.
+        let got = cube_math::function::Pow::fast().eval_f64(ctx, &pa, &pb);
+        let mut worst = 0.0f64;
+        let mut at = (f64::NAN, f64::NAN);
+        let mut bad = Vec::new();
+        for i in 0..pa.len() {
+            let want = rmath::Pow::new().eval(pa[i], pb[i]);
+            if !want.is_finite() || !got[i].is_finite() {
+                if !harness::same(got[i], want) && bad.len() < 8 {
+                    bad.push(format!("  {:e}^{:e}: got {:e}, want {:e}", pa[i], pb[i], got[i], want));
+                }
+                continue;
+            }
+            let u = harness::ulp_diff(got[i], want);
+            if u > worst {
+                worst = u;
+                at = (pa[i], pb[i]);
+            }
+        }
+        assert!(bad.is_empty(), "[{backend}] pow (fast): specials differ\n{}", bad.join("\n"));
+        assert!(worst == 0.0, "[{backend}] pow (fast): {worst:.3} ulp at {:e}^{:e}", at.0, at.1);
+        eprintln!("[{backend}] pow (fast): exact, as documented");
+    }
+
     // The ported transcendentals. Each is checked against `rmath`'s bit-exact
     // object, which its own suite pins to the platform `libm`.
     macro_rules! ported {

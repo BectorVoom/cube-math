@@ -7,3 +7,4 @@ pub mod expm1;
 pub mod ln;
 pub mod log1p;
 pub mod logx;
+pub mod pow;
