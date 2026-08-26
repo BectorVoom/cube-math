@@ -1,0 +1,38 @@
+[package]
+name = "cube-math"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "A CubeCL libm for f64 and f32: one kernel source, bit-exact on CPU and GPU."
+repository = "https://github.com/BectorVoom/cube-math"
+readme = "README.md"
+keywords = ["cubecl", "gpu", "libm", "math", "simd"]
+categories = ["mathematics", "science"]
+
+[features]
+default = ["wgpu"]
+wgpu = ["cubecl/wgpu"]
+wgpu-spirv = ["wgpu", "cubecl/wgpu-spirv"]
+cuda = ["cubecl/cuda"]
+cpu = ["cubecl/cpu"]
+
+[dependencies]
+cubecl = { version = "0.10", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+rmath = { path = "../rmath" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# The kernels are also plain Rust functions, and they lean on the wrapping
+# integer arithmetic every GPU backend has. `overflow-checks` would turn that
+# into a panic when they are called natively — under test, in `probe`, or as
+# the CPU fallback — so it is off in every profile, not just release.
+[profile.dev]
+overflow-checks = false
+
+[profile.test]
+overflow-checks = false
