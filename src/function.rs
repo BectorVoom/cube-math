@@ -313,6 +313,58 @@ macro_rules! math_fn2 {
     };
 }
 
+/// One argument in, one out, double precision only, no table.
+macro_rules! math_fn1_plain_64 {
+    (
+        $(#[$doc:meta])*
+        name: $name:ident,
+        module: $module:ident,
+        f64: $k64:path $(,)?
+    ) => {
+        math_fn1!(@object $(#[$doc])* $name);
+        #[doc = concat!("Launch kernels for [`", stringify!($name), "`].")]
+        pub mod $module {
+            use super::*;
+
+            #[doc = concat!("`", stringify!($name), "`, double precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k64(inp: &Array<f64>, out: &mut Array<f64>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < inp.len() {
+                    let _ = tab[0];
+                    out[ABSOLUTE_POS] = $k64(inp[ABSOLUTE_POS], cfg);
+                }
+            }
+        }
+        math_fn1!(@eval $name, $module, f64, k64, eval_f64, eval_f64_into, config_f64);
+    };
+}
+
+/// Two arguments in, one out, double precision only.
+macro_rules! math_fn2_64 {
+    (
+        $(#[$doc:meta])*
+        name: $name:ident,
+        module: $module:ident,
+        f64: $k64:path $(,)?
+    ) => {
+        math_fn1!(@object $(#[$doc])* $name);
+        #[doc = concat!("Launch kernels for [`", stringify!($name), "`].")]
+        pub mod $module {
+            use super::*;
+
+            #[doc = concat!("`", stringify!($name), "`, double precision.")]
+            #[cube(launch_unchecked)]
+            pub fn k64(a: &Array<f64>, b: &Array<f64>, out: &mut Array<f64>, tab: &Array<u64>, #[comptime] cfg: Config) {
+                if ABSOLUTE_POS < out.len() {
+                    let _ = tab[0];
+                    out[ABSOLUTE_POS] = $k64(a[ABSOLUTE_POS], b[ABSOLUTE_POS], cfg);
+                }
+            }
+        }
+        math_fn2!(@eval $name, $module, f64, k64, eval_f64, eval_f64_into, config_f64);
+    };
+}
+
 /// Two arguments in, one out, for a kernel that reads a table.
 macro_rules! math_fn2_tab {
     (
@@ -574,6 +626,29 @@ math_fn1! {
     name: Log1p,
     module: log1p,
     f64: crate::cube::double::log1p::log1p,
+}
+
+math_fn1_plain_64! {
+    /// Cube root.
+    ///
+    /// `BitExact` matches `f64::cbrt`, which is Rust's own correctly-rounded
+    /// CORE-MATH port rather than glibc's — see the kernel's module docs for
+    /// why that is the right reference for a Rust crate. Both policy axes are
+    /// accepted and have no effect.
+    name: Cbrt,
+    module: cbrt,
+    f64: crate::cube::double::cbrt::cbrt,
+}
+
+math_fn2_64! {
+    /// `sqrt(x^2 + y^2)`, without the intermediate overflow.
+    ///
+    /// `BitExact` reproduces glibc's `__ieee754_hypot`, which uses no fused
+    /// multiply-add anywhere — its error-free transformations depend on
+    /// separate roundings. Both policy axes are accepted and have no effect.
+    name: Hypot,
+    module: hypot,
+    f64: crate::cube::double::hypot::hypot,
 }
 
 math_fn2_tab! {

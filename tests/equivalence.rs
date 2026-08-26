@@ -49,6 +49,27 @@ fn suite_f64<R: Runtime>(backend: &'static str, ctx: &Ctx<R>) {
     }
     exact_family_f64(backend, ctx);
 
+    check(
+        backend,
+        "cbrt",
+        |v| cube_math::function::Cbrt::new().eval_f64(ctx, v),
+        |x| rmath::Cbrt::new().eval(x),
+        &sweep_f64(1e300),
+    );
+
+    // `hypot`, on the same cross product.
+    {
+        let (ha, hb) = sweep2_f64();
+        check2(
+            backend,
+            "hypot",
+            |p, q| cube_math::function::Hypot::new().eval_f64(ctx, p, q),
+            |x, y| rmath::Hypot::new().eval(x, y),
+            &ha,
+            &hb,
+        );
+    }
+
     // `pow`, on a cross product: what breaks it is the relationship between
     // base and exponent, not either alone.
     {
