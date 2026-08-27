@@ -34,6 +34,30 @@ pub enum Unary {
     Log1p,
     /// Cube root.
     Cbrt,
+    /// Arc sine, in radians.
+    Asin,
+    /// Arc cosine, in radians.
+    Acos,
+    /// Arc tangent, in radians.
+    Atan,
+    /// Sine. The argument is in radians.
+    Sin,
+    /// Cosine. The argument is in radians.
+    Cos,
+    /// Tangent. The argument is in radians.
+    Tan,
+    /// Hyperbolic sine.
+    Sinh,
+    /// Hyperbolic cosine.
+    Cosh,
+    /// Hyperbolic tangent.
+    Tanh,
+    /// Inverse hyperbolic tangent.
+    Atanh,
+    /// The error function.
+    Erf,
+    /// The complementary error function, `1 - erf(x)` without the cancellation.
+    Erfc,
     /// Square root.
     Sqrt,
     /// Absolute value.
@@ -65,6 +89,18 @@ impl Unary {
             Self::Log10 => "log10",
             Self::Log1p => "log1p",
             Self::Cbrt => "cbrt",
+            Self::Asin => "asin",
+            Self::Acos => "acos",
+            Self::Atan => "atan",
+            Self::Sin => "sin",
+            Self::Cos => "cos",
+            Self::Tan => "tan",
+            Self::Sinh => "sinh",
+            Self::Cosh => "cosh",
+            Self::Tanh => "tanh",
+            Self::Atanh => "atanh",
+            Self::Erf => "erf",
+            Self::Erfc => "erfc",
             Self::Sqrt => "sqrt",
             Self::Abs => "abs",
             Self::Floor => "floor",
@@ -101,6 +137,8 @@ pub enum UnaryPair {
     Frexp,
     /// Split into fractional and integral parts.
     Modf,
+    /// Sine and cosine of the same argument.
+    SinCos,
 }
 
 impl UnaryPair {
@@ -109,7 +147,15 @@ impl UnaryPair {
         match self {
             Self::Frexp => "frexp",
             Self::Modf => "modf",
+            Self::SinCos => "sincos",
         }
+    }
+
+    /// Whether single precision has this one yet.
+    ///
+    /// The IEEE-exact family does; the transcendentals do not. See the README.
+    pub const fn has_f32(self) -> bool {
+        matches!(self, Self::Frexp | Self::Modf)
     }
 }
 
@@ -127,6 +173,18 @@ fn kernel_f64(input: &Array<f64>, output: &mut Array<f64>, #[comptime] op: Unary
             Unary::Log10 => d::logx::log10(x, cfg),
             Unary::Log1p => d::log1p::log1p(x, cfg),
             Unary::Cbrt => d::cbrt::cbrt(x, cfg),
+            Unary::Asin => d::invtrig::asin(x, cfg),
+            Unary::Acos => d::invtrig::acos(x, cfg),
+            Unary::Atan => d::invtrig::atan(x, cfg),
+            Unary::Sin => d::trig::sin(x, cfg),
+            Unary::Cos => d::trig::cos(x, cfg),
+            Unary::Tan => d::trig::tan(x, cfg),
+            Unary::Sinh => d::hyper::sinh(x, cfg),
+            Unary::Cosh => d::hyper::cosh(x, cfg),
+            Unary::Tanh => d::hyper::tanh(x, cfg),
+            Unary::Atanh => d::hyper::atanh(x, cfg),
+            Unary::Erf => d::erf::erf(x, cfg),
+            Unary::Erfc => d::erfc::erfc(x, cfg),
             Unary::Sqrt => d::exact::sqrt(x, cfg),
             Unary::Abs => d::exact::abs(x, cfg),
             Unary::Floor => d::exact::floor(x, cfg),
@@ -166,6 +224,7 @@ fn kernel_pair_f64(input: &Array<f64>, o1: &mut Array<f64>, o2: &mut Array<f64>,
         let (a, b) = match op {
             UnaryPair::Frexp => d::exact::frexp(x, cfg),
             UnaryPair::Modf => d::exact::modf(x, cfg),
+            UnaryPair::SinCos => d::trig::sincos(x, cfg),
         };
         o1[ABSOLUTE_POS] = a;
         o2[ABSOLUTE_POS] = b;
@@ -179,6 +238,9 @@ fn kernel_pair_f32(input: &Array<f32>, o1: &mut Array<f32>, o2: &mut Array<f32>,
         let (a, b) = match op {
             UnaryPair::Frexp => s::exact::frexp(x, cfg),
             UnaryPair::Modf => s::exact::modf(x, cfg),
+            // Not ported in single precision; `unary_pair` rejects it before
+            // the launch, so this arm is unreachable.
+            _ => s::exact::modf(x, cfg),
         };
         o1[ABSOLUTE_POS] = a;
         o2[ABSOLUTE_POS] = b;
@@ -239,11 +301,16 @@ pub fn unary_pair<R: Runtime>(
                 client, count, dim, arg(a, n), arg(b, n), arg(c, n), op, config,
             )
         },
-        s if s == F32 => unsafe {
-            kernel_pair_f32::launch_unchecked::<R>(
-                client, count, dim, arg(a, n), arg(b, n), arg(c, n), op, config,
-            )
-        },
+        s if s == F32 => {
+            if !op.has_f32() {
+                return Err(MathError::UnsupportedOp { op: op.name(), dtype });
+            }
+            unsafe {
+                kernel_pair_f32::launch_unchecked::<R>(
+                    client, count, dim, arg(a, n), arg(b, n), arg(c, n), op, config,
+                )
+            }
+        }
         other => return Err(MathError::UnsupportedDtype(other)),
     }
     Ok(())

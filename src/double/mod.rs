@@ -15,14 +15,21 @@
 //! Nothing has to be bound or uploaded to make that work: the tables are
 //! constant arrays compiled into the kernel. See [`crate::tables::consts`].
 
+pub mod branred;
 pub mod cbrt;
+pub mod dd;
+pub mod erf;
+pub mod erfc;
 pub mod exact;
 pub mod exp;
 pub mod exp10;
 pub mod exp2;
 pub mod expm1;
+pub mod hyper;
 pub mod hypot;
+pub mod invtrig;
 pub mod ln;
 pub mod log1p;
 pub mod logx;
 pub mod pow;
+pub mod trig;

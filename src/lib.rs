@@ -114,13 +114,18 @@
 // * `assign_op_pattern`, `manual_range_contains`, `collapsible_if` — `#[cube]`
 //   expands the body it is given, and the compound and range forms do not
 //   survive that expansion.
+// * `neg_cmp_op_on_partial_ord` — `!(a < limit)` is not `a >= limit` here, and
+//   the difference is the whole point: a NaN answers `false` to both, so the
+//   negated form routes it to the reference schedule and the positive form
+//   would leave it on an approximation that has nothing to say about it.
 #![allow(
     clippy::eq_op,
     clippy::excessive_precision,
     clippy::int_plus_one,
     clippy::assign_op_pattern,
     clippy::manual_range_contains,
-    clippy::collapsible_if
+    clippy::collapsible_if,
+    clippy::neg_cmp_op_on_partial_ord
 )]
 // A `#[cube]` local that several branches assign has to be *initialised* from
 // a runtime value first: the macro turns a literal initialiser into a comptime

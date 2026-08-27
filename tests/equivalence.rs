@@ -85,6 +85,83 @@ fn suite_f64<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
         &sweep_f64(1e300),
     );
 
+    // The families with one algorithm and no cheaper approximation worth
+    // having — see each kernel's module docs. `Fast` runs the same code, so it
+    // is held to the same bit-exact standard rather than to an ulp bound.
+    macro_rules! single_algo {
+        ($name:literal, $op:expr, $rm:ident, $sweep:expr) => {
+            if exact {
+                let sw = $sweep;
+                check(
+                    backend,
+                    $name,
+                    |v| eval1(client, $op, v, F64, cfg_exact),
+                    |x| rmath::$rm::new().eval(x),
+                    &sw,
+                );
+                check(
+                    backend,
+                    concat!($name, " (fast)"),
+                    |v| eval1(client, $op, v, F64, cfg_fast),
+                    |x| rmath::$rm::new().eval(x),
+                    &sw,
+                );
+            }
+        };
+    }
+    single_algo!("asin", Unary::Asin, Asin, sweep_f64(1.25));
+    single_algo!("acos", Unary::Acos, Acos, sweep_f64(1.25));
+    single_algo!("atan", Unary::Atan, Atan, sweep_f64(1e300));
+    single_algo!("sin", Unary::Sin, Sin, sweep_f64(1e300));
+    single_algo!("cos", Unary::Cos, Cos, sweep_f64(1e300));
+    single_algo!("tan", Unary::Tan, Tan, sweep_f64(1e300));
+    single_algo!("erf", Unary::Erf, Erf, sweep_f64(6.0));
+    single_algo!("erfc", Unary::Erfc, Erfc, sweep_f64(30.0));
+
+    if exact {
+        // The trigonometric sweep on the band each reduction owns, not just on
+        // the whole range: `1e300` lands almost every input in `branred`, and
+        // the three cheaper reductions would go all but untested.
+        for limit in [0.5, 2.0, 25.0, 1e7, 1e9] {
+            let sw = sweep_f64(limit);
+            for (name, op, rm) in [
+                ("sin", Unary::Sin, 0u8),
+                ("cos", Unary::Cos, 1u8),
+                ("tan", Unary::Tan, 2u8),
+            ] {
+                check(
+                    backend,
+                    &format!("{name} (|x| < {limit:e})"),
+                    |v| eval1(client, op, v, F64, cfg_exact),
+                    |x| match rm {
+                        0 => rmath::Sin::new().eval(x),
+                        1 => rmath::Cos::new().eval(x),
+                        _ => rmath::Tan::new().eval(x),
+                    },
+                    &sw,
+                );
+            }
+        }
+        check_pair(
+            backend,
+            "sincos",
+            |v| eval1_pair(client, UnaryPair::SinCos, v, F64, cfg_exact),
+            |x| rmath::SinCos::new().eval(x),
+            &sweep_f64(1e300),
+        );
+    }
+
+    if exact {
+        check2(
+            backend,
+            "atan2",
+            |p, q| eval2(client, Binary::Atan2, p, q, F64, cfg_exact),
+            |x, y| rmath::Atan2::new().eval(x, y),
+            &pa,
+            &pb,
+        );
+    }
+
     // The ported transcendentals, each against its `rmath` object.
     macro_rules! ported {
         ($name:literal, $op:expr, $rm:ident, $limit:expr, $sweep:expr) => {
@@ -116,6 +193,10 @@ fn suite_f64<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
     ported!("log2", Unary::Log2, Log2, 2.0, sweep_f64(1e300));
     ported!("log10", Unary::Log10, Log10, 2.0, sweep_f64(1e300));
     ported!("log1p", Unary::Log1p, Log1p, 3.0, sweep_f64(1e300));
+    ported!("sinh", Unary::Sinh, Sinh, 3.0, sweep_f64(710.0));
+    ported!("cosh", Unary::Cosh, Cosh, 3.0, sweep_f64(710.0));
+    ported!("tanh", Unary::Tanh, Tanh, 4.0, sweep_f64(30.0));
+    ported!("atanh", Unary::Atanh, Atanh, 4.0, sweep_f64(1.25));
 }
 
 /// The functions IEEE-754 pins down exactly.

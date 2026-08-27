@@ -15,6 +15,8 @@ pub enum Binary {
     Pow,
     /// `sqrt(x^2 + y^2)`, without the intermediate overflow.
     Hypot,
+    /// The angle of `(x, y)` from the positive `x` axis, in radians.
+    Atan2,
     /// The magnitude of `x` with the sign of `y`.
     CopySign,
     /// `x - y` if `x > y`, and `+0` otherwise.
@@ -41,6 +43,7 @@ impl Binary {
         match self {
             Self::Pow => "pow",
             Self::Hypot => "hypot",
+            Self::Atan2 => "atan2",
             Self::CopySign => "copysign",
             Self::Fdim => "fdim",
             Self::Fmax => "fmax",
@@ -55,7 +58,7 @@ impl Binary {
 
     /// Whether single precision has this one yet.
     pub const fn has_f32(self) -> bool {
-        !matches!(self, Self::Pow | Self::Hypot)
+        !matches!(self, Self::Pow | Self::Hypot | Self::Atan2)
     }
 }
 
@@ -83,6 +86,7 @@ fn kernel_f64(a: &Array<f64>, b: &Array<f64>, out: &mut Array<f64>, #[comptime] 
         out[ABSOLUTE_POS] = match op {
             Binary::Pow => d::pow::pow(x, y, cfg),
             Binary::Hypot => d::hypot::hypot(x, y, cfg),
+            Binary::Atan2 => d::invtrig::atan2(x, y, cfg),
             Binary::CopySign => d::exact::copysign(x, y),
             Binary::Fdim => d::exact::fdim(x, y, cfg),
             Binary::Fmax => d::exact::fmax(x, y, cfg),
