@@ -15,7 +15,7 @@
 //! # }
 //! ```
 //!
-//! [`crate::Ctx`] does this once when it is built and uses the answer to pick
+//! [`fidelity`] does this once, and [`crate::MathConfig::exact_for`] uses the answer to pick
 //! [`FmaKind`] per precision, so the default configuration is correct
 //! everywhere and pays for emulation only where emulation is needed.
 //!
@@ -36,7 +36,9 @@
 
 use cubecl::prelude::*;
 
-use crate::cube::fma::FmaKind;
+use crate::config::MathConfig;
+use crate::fma::FmaKind;
+use crate::policy::Policy;
 
 /// What one precision does on this device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -76,8 +78,7 @@ pub struct Precision {
     /// `f64`, passes every probe here, and then evaluates `exp` to something
     /// that is not `exp`. So the last word is a whole kernel run on inputs
     /// whose correctly-rounded answers are mathematical constants, checked
-    /// bit for bit. Set by [`crate::Ctx`], which is the first thing that has
-    /// the tables to run one.
+    /// bit for bit. Set by [`Fidelity::measure`], after the mechanical probes.
     pub verified: bool,
 }
 
@@ -97,7 +98,7 @@ impl Precision {
     }
 
     /// Which multiply-add the kernels should be built with here.
-    pub fn fma_kind(self) -> FmaKind {
+    pub const fn fma_kind(self) -> FmaKind {
         if self.fused_fma { FmaKind::Hardware } else { FmaKind::Software }
     }
 
@@ -114,6 +115,16 @@ impl Precision {
         s.push_str(if self.verified { ", canary-ok" } else { ", CANARY-FAILED" });
         s
     }
+}
+
+/// Measure what `client`'s device does with the operations bit-exactness
+/// depends on.
+///
+/// A free function taking a client, in the shape the rest of the ecosystem
+/// uses. Runs several small kernels, so call it once per device and keep the
+/// answer.
+pub fn fidelity<R: Runtime>(client: &ComputeClient<R>) -> Fidelity {
+    Fidelity::measure(client)
 }
 
 /// What a device does with the operations bit-exactness depends on, per
@@ -134,7 +145,19 @@ impl Fidelity {
 
     /// Run the probe kernels on `client` and report what they found.
     pub fn measure<R: Runtime>(client: &ComputeClient<R>) -> Self {
-        Self { f64: measure_f64(client), f32: measure_f32(client) }
+        let mut out = Self { f64: measure_f64(client), f32: measure_f32(client) };
+        if out.f64.usable {
+            let (exact, approx) = canary_f64(client, out.f64.fma_kind());
+            out.f64.verified = exact;
+            // A backend that cannot get even the *approximate* answer right is
+            // not a backend with a precision caveat, it is a backend where
+            // `f64` does not work.
+            out.f64.usable = approx;
+        }
+        if out.f32.usable {
+            out.f32.verified = canary_f32(client);
+        }
+        out
     }
 }
 
@@ -289,4 +312,108 @@ fn measure_f32<R: Runtime>(client: &ComputeClient<R>) -> Precision {
         stable_arithmetic: o[4] == 0.0,
         verified: false,
     }
+}
+
+/// `exp` at five points, both policies, and a sentinel.
+#[cube(launch_unchecked)]
+fn canary_k64(inp: &Array<f64>, out: &mut Array<f64>, #[comptime] fk: FmaKind) {
+    if ABSOLUTE_POS < inp.len() {
+        let x = inp[ABSOLUTE_POS];
+        out[ABSOLUTE_POS] = crate::double::exp::exp(x, comptime!(MathConfig::new(Policy::EXACT, fk)));
+        out[ABSOLUTE_POS + 8] =
+            crate::double::exp::exp(x, comptime!(MathConfig::new(Policy::FAST, fk)));
+    }
+}
+
+/// A correctly-rounded square root, a tie that rounds to even, and a subnormal
+/// that survives being scaled.
+#[cube(launch_unchecked)]
+fn canary_k32(inp: &Array<f32>, out: &mut Array<f32>) {
+    if ABSOLUTE_POS < inp.len() {
+        let cfg = comptime!(MathConfig::new(Policy::EXACT, FmaKind::Hardware));
+        out[ABSOLUTE_POS] = crate::single::exact::sqrt(inp[ABSOLUTE_POS], cfg);
+        out[ABSOLUTE_POS + 8] = crate::single::exact::rint(inp[ABSOLUTE_POS], cfg);
+    }
+}
+
+/// Evaluate a real kernel on inputs whose correctly-rounded answers are
+/// mathematical constants, and check them bit for bit.
+///
+/// Returns `(bit_exact_ok, approximate_ok)`.
+///
+/// The mechanical probes above each test one property, and a backend can pass
+/// all of them and still be wrong. `wgpu`'s WGSL path is the case in point: it
+/// advertises `f64`, has `f64` arithmetic, passes every probe — and then
+/// evaluates `exp(1)` to a number that is not `e`. So the last word belongs to
+/// a whole kernel.
+///
+/// The expected values are the correctly rounded `f64` nearest to `e^x`, which
+/// is a fact about mathematics rather than about a `libm`, so the canary does
+/// not smuggle in a platform assumption. `exp` is the right canary because it
+/// exercises everything at once: the constant table, the integer exponent
+/// surgery, and a chain of eight multiply-adds whose answer changes if any of
+/// them is not fused.
+fn canary_f64<R: Runtime>(client: &ComputeClient<R>, fk: FmaKind) -> (bool, bool) {
+    let xs = vec![1.0f64, -1.0, 0.5, f64::EPSILON, 20.0];
+    let want = [
+        0x4005_bf0a_8b14_5769u64, // e
+        0x3fd7_8b56_362c_ef38,    // 1/e
+        0x3ffa_6129_8e1e_069c,    // sqrt(e)
+        0x3ff0_0000_0000_0001,    // exp(2^-52), which rounds to 1 + 2^-52
+        0x41bc_eb08_8b68_e804,    // e^20
+    ];
+    let n = xs.len();
+    let in_h = client.create(cubecl::bytes::Bytes::from_elems(xs));
+    let out_h = client.empty(16 * size_of::<f64>());
+    unsafe {
+        canary_k64::launch_unchecked::<R>(
+            client,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(n as u32),
+            ArrayArg::from_raw_parts(in_h, n),
+            ArrayArg::from_raw_parts(out_h.clone(), 16),
+            fk,
+        );
+    }
+    let Ok(bytes) = client.read_one(out_h) else {
+        return (false, false);
+    };
+    let got = f64::from_bytes(&bytes);
+    let ok = |base: usize, tol: f64| {
+        (0..n).all(|i| {
+            let w = f64::from_bits(want[i]);
+            (got[base + i] - w).abs() <= tol * w.abs()
+        })
+    };
+    // The approximate arm allows a generous relative error — it is asking
+    // "does this backend compute `exp` at all", not "how accurately".
+    (ok(0, 0.0), ok(8, 1e-12))
+}
+
+/// The single-precision canary. See [`canary_f64`].
+///
+/// `exp` has no `f32` kernel yet, so this leans on the exact family, whose
+/// answers are pinned by IEEE-754 rather than by any `libm`.
+fn canary_f32<R: Runtime>(client: &ComputeClient<R>) -> bool {
+    let xs = vec![2.0f32, 0.5, 2.5, f32::from_bits(1)];
+    let n = xs.len();
+    let in_h = client.create(cubecl::bytes::Bytes::from_elems(xs));
+    let out_h = client.empty(16 * size_of::<f32>());
+    unsafe {
+        canary_k32::launch_unchecked::<R>(
+            client,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(n as u32),
+            ArrayArg::from_raw_parts(in_h, n),
+            ArrayArg::from_raw_parts(out_h.clone(), 16),
+        );
+    }
+    let Ok(bytes) = client.read_one(out_h) else {
+        return false;
+    };
+    let g = f32::from_bytes(&bytes);
+    g[0].to_bits() == 2.0f32.sqrt().to_bits()
+        && g[3].to_bits() == f32::from_bits(1).sqrt().to_bits()
+        && g[9].to_bits() == 0.0f32.to_bits()
+        && g[10].to_bits() == 2.0f32.to_bits()
 }

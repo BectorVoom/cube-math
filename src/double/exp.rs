@@ -17,10 +17,10 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::bits::inf64;
-use crate::cube::fma::{FmaKind, fma64};
-use crate::tables::arena::OFF_EXP;
+use crate::config::MathConfig;
+use crate::bits::inf64;
+use crate::fma::{FmaKind, fma64};
+use crate::tables::consts::exp_tab;
 use crate::tables::double::exp as t;
 
 /// `2^1009`, the up-scale the `k > 0` fix-up arm undoes.
@@ -30,11 +30,12 @@ const P_M1022: f64 = f64::from_bits(0x0010000000000000);
 
 /// `e^x`.
 #[cube]
-pub fn exp(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn exp(x: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     if comptime!(cfg.bit_exact()) {
-        bit_exact(x, tab, comptime!(cfg.fma()))
+        bit_exact(x, comptime!(cfg.fma()))
     } else {
-        fast(x, tab, comptime!(cfg.checked()), comptime!(cfg.fma()))
+        fast(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
 }
 
@@ -46,7 +47,7 @@ pub fn exp(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
 /// and saying so keeps the code readable and free of a wrapping subtraction
 /// whose behaviour would otherwise have to be pinned down per backend.
 #[cube]
-pub fn bit_exact(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> f64 {
+pub fn bit_exact(x: f64, #[comptime] fk: FmaKind) -> f64 {
     let bits = u64::reinterpret(x);
     let abstop = u32::cast_from(bits >> 52u64) & 0x7ffu32;
     // The initial value is the `|x| < 2^-54` answer, where `e^x` rounds to
@@ -68,7 +69,7 @@ pub fn bit_exact(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> f64 {
             out = inf64(); // genuine overflow
         }
     } else {
-        let (tmp, sbits, ki) = core(x, tab, fk);
+        let (tmp, sbits, ki) = core(x, fk);
         if abstop >= 0x408u32 {
             // 512 <= |x| < 1024: the scale may be out of range on its own even
             // where the result is not, so it is built at a shifted exponent
@@ -85,13 +86,14 @@ pub fn bit_exact(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> f64 {
 /// The shared main path: `(tmp, sbits, ki)`, so the caller can choose between
 /// the one-instruction tail and [`specialcase()`].
 #[cube]
-pub fn core(x: f64, tab: &Array<u64>, #[comptime] fk: FmaKind) -> (f64, u64, u64) {
+pub fn core(x: f64, #[comptime] fk: FmaKind) -> (f64, u64, u64) {
     let kd_s = fma64(x, t::INVLN2N, t::SHIFT, fk);
     let ki = u64::reinterpret(kd_s);
     let kd = kd_s - t::SHIFT;
     let r = fma64(kd, t::NEGLN2LON, fma64(kd, t::NEGLN2HIN, x, fk), fk);
 
-    let idx = usize::cast_from((ki & 127u64) * 2u64) + OFF_EXP as usize;
+    let tab = exp_tab();
+    let idx = usize::cast_from((ki & 127u64) * 2u64);
     let tail = f64::reinterpret(tab[idx]);
     let sbits = tab[idx + 1] + (ki << 45u64);
 
@@ -158,7 +160,7 @@ const LN2LO: f64 = f64::from_bits(0x3dea39ef35793c76);
 /// Maximum error measured against the correctly rounded result: below 1 ulp
 /// over `|x| < 512`.
 #[cube]
-pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
+pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
     let kd_s = fma64(x, LOG2E, t::SHIFT, fk);
     let kd = kd_s - t::SHIFT;
     // Cody-Waite: subtract `kd * ln(2)` in two exactly-representable pieces.
@@ -198,7 +200,7 @@ pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk:
         // against the platform routine, rather than re-derived per policy.
         let abstop = u32::cast_from(u64::reinterpret(x) >> 52u64) & 0x7ffu32;
         if abstop >= 0x408u32 || abstop < 0x3c9u32 {
-            out = bit_exact(x, tab, fk);
+            out = bit_exact(x, fk);
         }
     }
     out

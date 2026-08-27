@@ -11,10 +11,10 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::bits::neg_inf64;
-use crate::cube::fma::{FmaKind, fma64};
-use crate::tables::arena::OFF_LOG2;
+use crate::config::MathConfig;
+use crate::bits::neg_inf64;
+use crate::fma::{FmaKind, fma64};
+use crate::tables::consts::log2_tab;
 use crate::tables::double::log2 as t;
 
 /// The table-centring offset, `bits(0x1.6p-1)`.
@@ -80,7 +80,8 @@ pub fn normalised_bits(x: f64) -> u64 {
 /// table, a degree-6 correction, and a separate near-one polynomial where the
 /// main path would lose too much to cancellation.
 #[cube]
-pub fn log2(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn log2(x: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     let mut out = x;
     if degenerate(x) {
         out = edge(x);
@@ -88,7 +89,7 @@ pub fn log2(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
         if x >= NEAR_LO && x < NEAR_HI {
             out = log2_near_one(x);
         } else {
-            out = log2_main(normalised_bits(x), tab);
+            out = log2_main(normalised_bits(x));
         }
     } else {
         out = log2_fast(x, comptime!(cfg.fma()));
@@ -98,13 +99,14 @@ pub fn log2(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
 
 /// The table path, taking already-normalised bits.
 #[cube]
-pub fn log2_main(ix: u64, tab: &Array<u64>) -> f64 {
+pub fn log2_main(ix: u64) -> f64 {
     let tmp = ix - OFF;
     let idx = usize::cast_from((tmp >> 46u64) & 63u64);
     let z = f64::reinterpret(ix - (tmp & (0xfffu64 << 52u64)));
     let kd = f64::cast_from(i64::reinterpret(tmp) >> 52i64);
 
-    let base = OFF_LOG2 as usize + 2usize * idx;
+    let tab = log2_tab();
+    let base = 2usize * idx;
     let invc = f64::reinterpret(tab[base]);
     let logc = f64::reinterpret(tab[base + 1]);
 
@@ -158,7 +160,7 @@ pub fn log2_near_one(x: f64) -> f64 {
 /// Measured error: below 2 ulp over the positive normals.
 #[cube]
 pub fn log2_fast(x: f64, #[comptime] fk: FmaKind) -> f64 {
-    let (e, poly) = crate::cube::double::ln::fold(x, fk);
+    let (e, poly) = crate::double::ln::fold(x, fk);
     fma64(poly, LOG2_E, e, fk)
 }
 
@@ -183,14 +185,15 @@ const LOG2_E: f64 = std::f64::consts::LOG2_E;
 /// with three *unfused* operations. There is no `vfmadd` anywhere in it, so
 /// the final combine below is genuinely three separate roundings.
 #[cube]
-pub fn log10(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn log10(x: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     let mut out = x;
     if degenerate(x) {
         out = edge(x);
     } else if comptime!(cfg.bit_exact()) {
-        out = log10_main(normalised_bits(x), tab);
+        out = log10_main(normalised_bits(x));
     } else {
-        let (e, poly) = crate::cube::double::ln::fold(x, comptime!(cfg.fma()));
+        let (e, poly) = crate::double::ln::fold(x, comptime!(cfg.fma()));
         // `e log10(2) + ln(m) / ln(10)` rather than `ln(x) / ln(10)`: the
         // exponent term is then exact to within one rounding instead of
         // inheriting the error of a large `ln`.
@@ -201,7 +204,7 @@ pub fn log10(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
 
 /// The reduce-and-delegate path, for already-normalised bits.
 #[cube]
-pub fn log10_main(b: u64, tab: &Array<u64>) -> f64 {
+pub fn log10_main(b: u64) -> f64 {
         // An *arithmetic* shift: `normalised_bits` can leave the exponent
         // field negative for a renormalised subnormal, and reading it as an
         // unsigned field would turn that into a huge positive exponent.
@@ -215,7 +218,7 @@ pub fn log10_main(b: u64, tab: &Array<u64>) -> f64 {
         // The *whole* of `ln`, near-one path included — that is what
         // `__log10_finite` calls. Going straight to the table walk would make
         // `log10(1)` a tiny nonzero instead of an exact zero.
-        let lr = crate::cube::double::ln::bit_exact(reduced, tab);
+        let lr = crate::double::ln::bit_exact(reduced);
         // Deliberately not fused: the disassembly has three separate
         // multiply/add pairs here, not a fusion opportunity.
         (lr * INV_LN10 + y * LOG10_2LO) + y * LOG10_2HI

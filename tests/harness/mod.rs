@@ -7,7 +7,117 @@
 #![allow(dead_code)]
 
 use cube_math::prelude::*;
-use cubecl::prelude::Runtime;
+use cubecl::prelude::*;
+use cubecl::std::tensor::TensorHandle;
+
+/// Put a slice on the device as a flat contiguous tensor.
+pub fn upload<R: Runtime, E: CubeElement>(
+    client: &ComputeClient<R>,
+    xs: &[E],
+    dtype: cubecl::prelude::StorageType,
+) -> TensorHandle<R> {
+    let handle = client.create(cubecl::bytes::Bytes::from_elems(xs.to_vec()));
+    TensorHandle::new_contiguous(vec![xs.len()], handle, dtype)
+}
+
+/// Reserve a flat contiguous tensor of `n` elements.
+pub fn empty<R: Runtime>(
+    client: &ComputeClient<R>,
+    n: usize,
+    dtype: cubecl::prelude::StorageType,
+) -> TensorHandle<R> {
+    TensorHandle::empty(client, vec![n], dtype)
+}
+
+/// Read a tensor back.
+pub fn download<R: Runtime, E: CubeElement + Clone>(
+    client: &ComputeClient<R>,
+    t: TensorHandle<R>,
+    n: usize,
+) -> Vec<E> {
+    let bytes = client.read_one(t.handle).expect("device read failed");
+    E::from_bytes(&bytes)[..n].to_vec()
+}
+
+/// Evaluate a one-argument op over a slice, the long way round.
+pub fn eval1<R: Runtime, E: CubeElement + Clone>(
+    client: &ComputeClient<R>,
+    op: Unary,
+    xs: &[E],
+    dtype: cubecl::prelude::StorageType,
+    cfg: MathConfig,
+) -> Vec<E> {
+    let input = upload(client, xs, dtype);
+    let output = empty(client, xs.len(), dtype);
+    let out = output.handle.clone();
+    cube_math::launch::unary(client, op, input.binding(), output.binding(), dtype, cfg)
+        .expect("launch failed");
+    download(client, TensorHandle::new_contiguous(vec![xs.len()], out, dtype), xs.len())
+}
+
+/// Evaluate a two-argument op over two slices.
+pub fn eval2<R: Runtime, E: CubeElement + Clone>(
+    client: &ComputeClient<R>,
+    op: Binary,
+    a: &[E],
+    b: &[E],
+    dtype: cubecl::prelude::StorageType,
+    cfg: MathConfig,
+) -> Vec<E> {
+    let ah = upload(client, a, dtype);
+    let bh = upload(client, b, dtype);
+    let output = empty(client, a.len(), dtype);
+    let out = output.handle.clone();
+    cube_math::launch::binary(client, op, ah.binding(), bh.binding(), output.binding(), dtype, cfg)
+        .expect("launch failed");
+    download(client, TensorHandle::new_contiguous(vec![a.len()], out, dtype), a.len())
+}
+
+/// Evaluate a one-argument, two-output op over a slice.
+pub fn eval1_pair<R: Runtime, E: CubeElement + Clone>(
+    client: &ComputeClient<R>,
+    op: UnaryPair,
+    xs: &[E],
+    dtype: cubecl::prelude::StorageType,
+    cfg: MathConfig,
+) -> (Vec<E>, Vec<E>) {
+    let input = upload(client, xs, dtype);
+    let o1 = empty(client, xs.len(), dtype);
+    let o2 = empty(client, xs.len(), dtype);
+    let (h1, h2) = (o1.handle.clone(), o2.handle.clone());
+    cube_math::launch::unary_pair(
+        client, op, input.binding(), o1.binding(), o2.binding(), dtype, cfg,
+    )
+    .expect("launch failed");
+    (
+        download(client, TensorHandle::new_contiguous(vec![xs.len()], h1, dtype), xs.len()),
+        download(client, TensorHandle::new_contiguous(vec![xs.len()], h2, dtype), xs.len()),
+    )
+}
+
+/// Evaluate a two-argument, two-output op over two slices.
+pub fn eval2_pair<R: Runtime, E: CubeElement + Clone>(
+    client: &ComputeClient<R>,
+    op: BinaryPair,
+    a: &[E],
+    b: &[E],
+    dtype: cubecl::prelude::StorageType,
+    cfg: MathConfig,
+) -> (Vec<E>, Vec<E>) {
+    let ah = upload(client, a, dtype);
+    let bh = upload(client, b, dtype);
+    let o1 = empty(client, a.len(), dtype);
+    let o2 = empty(client, a.len(), dtype);
+    let (h1, h2) = (o1.handle.clone(), o2.handle.clone());
+    cube_math::launch::binary_pair(
+        client, op, ah.binding(), bh.binding(), o1.binding(), o2.binding(), dtype, cfg,
+    )
+    .expect("launch failed");
+    (
+        download(client, TensorHandle::new_contiguous(vec![a.len()], h1, dtype), a.len()),
+        download(client, TensorHandle::new_contiguous(vec![a.len()], h2, dtype), a.len()),
+    )
+}
 
 /// A reproducible xorshift, so a failing sweep can be replayed.
 pub struct Rng(pub u64);

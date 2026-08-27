@@ -14,26 +14,27 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::bits::inf64;
-use crate::cube::fma::{FmaKind, fma64};
-use crate::tables::arena::OFF_EXP;
+use crate::config::MathConfig;
+use crate::bits::inf64;
+use crate::fma::{FmaKind, fma64};
+use crate::tables::consts::exp_tab;
 use crate::tables::double::exp as t;
 use crate::tables::double::exp10 as x10;
 
 /// `10^x`.
 #[cube]
-pub fn exp10(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn exp10(x: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     if comptime!(cfg.bit_exact()) {
-        bit_exact(x, tab)
+        bit_exact(x)
     } else {
-        fast(x, tab, comptime!(cfg.checked()), comptime!(cfg.fma()))
+        fast(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
 }
 
 /// The reference schedule, over the whole domain.
 #[cube]
-pub fn bit_exact(x: f64, tab: &Array<u64>) -> f64 {
+pub fn bit_exact(x: f64) -> f64 {
     let ix = u64::reinterpret(x);
     let abstop = u32::cast_from(ix >> 52u64) & 0x7ffu32;
     // The `|x| < 2^-57` answer, where `10^x` rounds to `1 + x`; also the
@@ -49,14 +50,14 @@ pub fn bit_exact(x: f64, tab: &Array<u64>) -> f64 {
     } else if x < x10::UFLOW_BOUND {
         out = 0.0;
     } else {
-        let (tmp, sbits, ki) = core(x, tab);
+        let (tmp, sbits, ki) = core(x);
         if abstop >= x10::SMALL_TOP + x10::THRESH {
             // Large but representable: the scale factor alone can leave the
             // exponent range. glibc's `e_exp10.c: special_case` is
             // `e_exp2.c: specialcase` with the same two arms and the same
             // constants, so it is that code here rather than a second
             // transcription of it.
-            out = crate::cube::double::exp2::specialcase(tmp, sbits, ki);
+            out = crate::double::exp2::specialcase(tmp, sbits, ki);
         } else {
             let scale = f64::reinterpret(sbits);
             out = scale * tmp + scale;
@@ -71,7 +72,7 @@ pub fn bit_exact(x: f64, tab: &Array<u64>) -> f64 {
 /// and again after the low part — because that is what the compiled library
 /// does.
 #[cube]
-pub fn core(x: f64, tab: &Array<u64>) -> (f64, u64, u64) {
+pub fn core(x: f64) -> (f64, u64, u64) {
     let z = x10::INVLOG10_2N * x;
     let kd_s = z + t::SHIFT;
     let ki = u64::reinterpret(kd_s);
@@ -80,7 +81,8 @@ pub fn core(x: f64, tab: &Array<u64>) -> (f64, u64, u64) {
     let r0 = x10::NEGLOG10_2HIN * kd + x;
     let r = x10::NEGLOG10_2LON * kd + r0;
 
-    let idx = usize::cast_from((ki & 127u64) * 2u64) + OFF_EXP as usize;
+    let tab = exp_tab();
+    let idx = usize::cast_from((ki & 127u64) * 2u64);
     let tail = f64::reinterpret(tab[idx]);
     let sbits = tab[idx + 1] + (ki << 45u64);
 
@@ -126,7 +128,7 @@ const H13: f64 = 8.213412535439399e-6;
 /// Maximum error measured against the correctly rounded result: below 1.5 ulp
 /// over the whole finite range.
 #[cube]
-pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
+pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
     let kd_s = fma64(x, x10::LOG2_10, t::SHIFT, fk);
     let kd = kd_s - t::SHIFT;
     let r = fma64(-kd, x10::LOG10_2LO, fma64(-kd, x10::LOG10_2HI, x, fk), fk);
@@ -160,7 +162,7 @@ pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk:
         // takes over. See `exp`'s `fast` for why the hard cases live there.
         let abstop = u32::cast_from(u64::reinterpret(x) >> 52u64) & 0x7ffu32;
         if abstop >= 0x405u32 || abstop < x10::SMALL_TOP {
-            out = bit_exact(x, tab);
+            out = bit_exact(x);
         }
     }
     out

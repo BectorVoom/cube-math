@@ -15,10 +15,11 @@ default = ["wgpu"]
 wgpu = ["cubecl/wgpu"]
 wgpu-spirv = ["wgpu", "cubecl/wgpu-spirv"]
 cuda = ["cubecl/cuda"]
+hip = ["cubecl/hip"]
 cpu = ["cubecl/cpu"]
 
 [dependencies]
-cubecl = { version = "0.10", default-features = false, features = ["std"] }
+cubecl = { version = "0.10", default-features = false, features = ["std", "stdlib"] }
 
 [dev-dependencies]
 rmath = { path = "../rmath" }

@@ -12,10 +12,10 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::bits::neg_inf64;
-use crate::cube::fma::{FmaKind, fma64};
-use crate::tables::arena::OFF_LOG;
+use crate::config::MathConfig;
+use crate::bits::neg_inf64;
+use crate::fma::{FmaKind, fma64};
+use crate::tables::consts::log_tab;
 use crate::tables::double::log as t;
 
 /// Low end of the near-one window, `bits(1.0 - 0x1p-4)`.
@@ -29,17 +29,18 @@ const P52: f64 = 4503599627370496.0;
 
 /// `ln(x)`.
 #[cube]
-pub fn ln(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn ln(x: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     if comptime!(cfg.bit_exact()) {
-        bit_exact(x, tab)
+        bit_exact(x)
     } else {
-        fast(x, tab, comptime!(cfg.checked()), comptime!(cfg.fma()))
+        fast(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
 }
 
 /// The reference schedule, over the whole domain.
 #[cube]
-pub fn bit_exact(x: f64, tab: &Array<u64>) -> f64 {
+pub fn bit_exact(x: f64) -> f64 {
     let ix = u64::reinterpret(x);
     let top = u32::cast_from(ix >> 48u64);
     let mut out = x;
@@ -63,24 +64,25 @@ pub fn bit_exact(x: f64, tab: &Array<u64>) -> f64 {
         } else {
             // Subnormal: scale into the normal range and correct the exponent.
             let iz = u64::reinterpret(x * P52) - (52u64 << 52u64);
-            out = main(iz, tab);
+            out = main(iz);
         }
     } else {
-        out = main(ix, tab);
+        out = main(ix);
     }
     out
 }
 
 /// The table path, taking already-normalised bits.
 #[cube]
-pub fn main(ix: u64, tab: &Array<u64>) -> f64 {
+pub fn main(ix: u64) -> f64 {
     let tmp = ix - OFF;
     let i = usize::cast_from((tmp >> 45u64) & 127u64);
     // An *arithmetic* shift: `tmp`'s top bits carry the exponent, sign and all.
     let k = i64::reinterpret(tmp) >> 52i64;
     let iz = ix - (tmp & (0xfffu64 << 52u64));
 
-    let base = OFF_LOG as usize + 2usize * i;
+    let tab = log_tab();
+    let base = 2usize * i;
     let invc = f64::reinterpret(tab[base]);
     let logc = f64::reinterpret(tab[base + 1]);
     let z = f64::reinterpret(iz);
@@ -169,7 +171,7 @@ const LN2LO: f64 = f64::from_bits(0x3dea39ef35793c76);
 /// `-1` and `k ln(2)` and the series are the same size and opposite in sign.
 /// Away from that band it is below 1 ulp.
 #[cube]
-pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
+pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
     let (kd, poly) = fold(x, fk);
     let mut out = fma64(kd, LN2LO, fma64(kd, LN2HI, poly, fk), fk);
 
@@ -180,7 +182,7 @@ pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk:
         // policy. See `exp`'s `fast`.
         let top = u32::cast_from(u64::reinterpret(x) >> 48u64);
         if top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
-            out = bit_exact(x, tab);
+            out = bit_exact(x);
         }
     }
     out

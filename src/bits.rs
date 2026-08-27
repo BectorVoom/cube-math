@@ -11,6 +11,8 @@
 
 use cubecl::prelude::*;
 
+use crate::tables::consts::{f32_const, f64_const};
+
 /// The bit pattern of a `f64`.
 #[cube]
 pub fn f64_bits(x: f64) -> u64 {
@@ -52,6 +54,29 @@ pub fn top9(x: f32) -> u32 {
     u32::reinterpret(x) >> 23u32
 }
 
+/// Force `x` into a runtime variable.
+///
+/// A no-op at runtime — the backend folds the copy away — and load-bearing at
+/// compile time. The C++ backends compile a reinterpretation to
+/// `reinterpret_cast<T const&>(x)`, which needs an lvalue; a constant is not
+/// one, so `ln(2.0)` with a literal argument fails to compile where `ln(x)`
+/// with a buffer read succeeds. Since every one of these functions starts by
+/// reinterpreting its argument, every public entry point launders its
+/// arguments through this first, and calling them with constants works.
+///
+/// `.runtime()` is not enough: the optimiser folds that straight back into a
+/// constant. A cell survives it.
+#[cube]
+pub fn opaque64(x: f64) -> f64 {
+    RuntimeCell::<f64>::new(x).read()
+}
+
+/// [`opaque64()`] in single precision.
+#[cube]
+pub fn opaque32(x: f32) -> f32 {
+    RuntimeCell::<f32>::new(x).read()
+}
+
 /// True when `x` is NaN.
 ///
 /// Read off the bits, not written as `x != x`. The IEEE definition is the
@@ -85,43 +110,49 @@ pub fn is_finite32(x: f32) -> bool {
 
 /// Positive infinity, built from its bit pattern.
 ///
-/// Not `f64::INFINITY`. A Rust constant reaches the backend as a literal, and
+/// Two things are going on in one line. Not `f64::INFINITY`, because A Rust constant reaches the backend as a literal, and
 /// WGSL has no spelling for an infinite one — `f64(inf)` is not valid source,
-/// so a kernel mentioning `f64::INFINITY` fails to compile, and `wgpu` reports
-/// that by leaving the output buffer untouched rather than by returning an
-/// error. Assembling it from bits works on every backend and is exact by
-/// construction.
+/// a Rust constant reaches the backend as a literal and WGSL has no spelling
+/// for an infinite one — `f64(inf)` is not valid source, so a kernel
+/// mentioning `f64::INFINITY` fails to compile, and `wgpu` reports that by
+/// leaving the output buffer untouched rather than by returning an error.
+///
+/// And `.runtime()`, because the C++ backend emits a reinterpretation as
+/// `reinterpret_cast<double const&>(x)`, which needs an lvalue: handed a
+/// literal it produces `reinterpret_cast` from an rvalue, and `hipcc` rejects
+/// it. Forcing the bit pattern into a variable first costs nothing — the
+/// compiler folds it straight back — and compiles everywhere.
 #[cube]
 pub fn inf64() -> f64 {
-    f64::reinterpret(0x7ff0_0000_0000_0000u64)
+    f64_const(0x7ff0_0000_0000_0000u64)
 }
 
 /// Negative infinity. See [`inf64()`].
 #[cube]
 pub fn neg_inf64() -> f64 {
-    f64::reinterpret(0xfff0_0000_0000_0000u64)
+    f64_const(0xfff0_0000_0000_0000u64)
 }
 
 /// A quiet NaN. See [`inf64()`].
 #[cube]
 pub fn nan64() -> f64 {
-    f64::reinterpret(0x7ff8_0000_0000_0000u64)
+    f64_const(0x7ff8_0000_0000_0000u64)
 }
 
 /// Positive infinity, single precision. See [`inf64()`].
 #[cube]
 pub fn inf32() -> f32 {
-    f32::reinterpret(0x7f80_0000u32)
+    f32_const(0x7f80_0000u32)
 }
 
 /// Negative infinity, single precision. See [`inf64()`].
 #[cube]
 pub fn neg_inf32() -> f32 {
-    f32::reinterpret(0xff80_0000u32)
+    f32_const(0xff80_0000u32)
 }
 
 /// A quiet NaN, single precision. See [`inf64()`].
 #[cube]
 pub fn nan32() -> f32 {
-    f32::reinterpret(0x7fc0_0000u32)
+    f32_const(0x7fc0_0000u32)
 }

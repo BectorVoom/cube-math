@@ -12,15 +12,14 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::fma::{FmaKind, fma64};
+use crate::config::MathConfig;
+use crate::bits::neg_inf64;
+use crate::fma::{FmaKind, fma64};
 
 /// High part of `ln(2)`; `n * LN2_HI` is exact for every `|n| < 2000`.
 const LN2_HI: f64 = f64::from_bits(0x3fe62e42fee00000);
 /// Low part of `ln(2)`. See [`LN2_HI`].
 const LN2_LO: f64 = f64::from_bits(0x3dea39ef35793c76);
-/// `2^54`, both the underflow-detection scale and the `-1.0` overflow numerator.
-const TWO54: f64 = f64::from_bits(0x4350000000000000);
 
 /// `Lp[1..=7]`: the odd-series minimax coefficients for `R(z)` on
 /// `s in [0, 0.1716]`, with `s = f / (2 + f)`.
@@ -34,11 +33,12 @@ const LP6: f64 = f64::from_bits(0x3FC2F112DF3E5244);
 
 /// `ln(1 + x)`.
 #[cube]
-pub fn log1p(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn log1p(x: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     if comptime!(cfg.bit_exact()) {
         bit_exact(x)
     } else {
-        fast(x, tab, comptime!(cfg.checked()), comptime!(cfg.fma()))
+        fast(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
 }
 
@@ -67,11 +67,17 @@ pub fn bit_exact(x: f64) -> f64 {
             // x < 0.41422
             if ax >= 0x3ff0_0000u32 {
                 // x <= -1.0
-                // A genuine runtime `0/0` for `x < -1`, which resolves to the
+                // `x < -1` is a genuine runtime `0/0`, which resolves to the
                 // hardware's default NaN — sign bit *set*, unlike the positive
                 // quiet NaN a constant would give. The sign of a NaN is part
                 // of a bit-exactness contract.
-                out = select(x == -1.0, -TWO54 / 0.0, (x - x) / (x - x));
+                //
+                // `x == -1` is `-inf`, which the C source raises by dividing
+                // `-2^54` by a literal zero. Spelled as a constant here
+                // instead: the division folds at compile time either way, and
+                // a folded infinity is a literal the C++ backends cannot
+                // print. Nothing in this crate observes the exception flag.
+                out = select(x == -1.0, neg_inf64(), (x - x) / (x - x));
                 done = true;
             } else if ax < 0x3e20_0000u32 {
                 // |x| < 2^-29
@@ -178,7 +184,7 @@ pub fn tail(f: f64, hu: u32, k: i32, c: f64) -> f64 {
 /// is [`super::ln`]'s own 2 plus the correction's rounding. Below `2^-29`,
 /// where the series takes over, it is exact to within half an ulp.
 #[cube]
-pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
+pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
     let u = 1.0 + x;
     // The part of `x` that `1 + x` rounded away, exactly. Sterbenz makes both
     // subtractions exact in the range where either matters. The correction is
@@ -188,8 +194,8 @@ pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk:
     // Sterbenz and `x - (u - 1)` recovers the lost part; at or above it, `x`
     // is the large operand and `1 - (u - x)` is the exact form instead.
     let c0 = select(u >= 2.0, 1.0 - (u - x), x - (u - 1.0)) / u;
-    let c = select(u > 0.0 && crate::cube::bits::is_finite64(u), c0, 0.0);
-    let mut out = crate::cube::double::ln::fast(u, tab, checked, fk) + c;
+    let c = select(u > 0.0 && crate::bits::is_finite64(u), c0, 0.0);
+    let mut out = crate::double::ln::fast(u, checked, fk) + c;
 
     // Below 2^-29 the correction *is* the answer; `1 + x` has thrown away
     // everything else.

@@ -32,7 +32,10 @@
 
 use cubecl::prelude::*;
 
-use crate::cube::bits::is_finite64 as is_finite;
+use crate::bits::is_finite64 as is_finite;
+
+/// The smallest positive `f64`.
+const MIN_SUBNORMAL: f64 = f64::from_bits(1);
 
 /// Which multiply-add a kernel should use.
 ///
@@ -129,11 +132,19 @@ pub fn two_sum(a: f64, b: f64) -> (f64, f64) {
 /// correctly-rounded sums with round to odd*, 2008.)
 ///
 /// `(h, l)` must come from [`two_sum()`], so `l` is `h`'s exact residual.
+///
+/// A non-finite `l` means the pair did not come from an exact decomposition —
+/// `two_sum` produces a NaN residual when one of its operands is infinite —
+/// and there is nothing to round towards, so `h` stands. Spelled with an
+/// explicit finiteness test rather than by relying on `l != 0.0` being false
+/// for a NaN, because that depends on `!=` being an *ordered* compare and the
+/// backends disagree: CubeCL's CPU runtime lowers it ordered and HIP lowers it
+/// unordered, so the same expression takes different branches on the two.
 #[cube]
 pub fn round_odd(h: f64, l: f64) -> f64 {
     let mut out = h;
     let bits = u64::reinterpret(h);
-    if l != 0.0 && bits & 1u64 == 0u64 {
+    if l != 0.0 && is_finite(l) && bits & 1u64 == 0u64 {
         // `h` is even and the true value is strictly between `h` and its
         // neighbour in the direction of `l`; that neighbour is the odd one.
         let up = l > 0.0;
@@ -187,6 +198,9 @@ pub fn round_odd(h: f64, l: f64) -> f64 {
 /// determined by the dominant term alone.
 #[cube]
 pub fn fma_f64(a: f64, b: f64, c: f64) -> f64 {
+    let a = crate::bits::opaque64(a);
+    let b = crate::bits::opaque64(b);
+    let c = crate::bits::opaque64(c);
     let mut out = a * b + c;
     // When either factor is zero or not finite, `a * b + c` is already the
     // IEEE answer: the exact product is then a special value that propagates
@@ -217,7 +231,7 @@ pub fn fma_f64(a: f64, b: f64, c: f64) -> f64 {
             // would scale away to nothing; a signed minimum subnormal keeps
             // the round-to-odd direction, which is the only thing that
             // survives at that distance.
-            let tiny = select(c == 0.0, c, copysign_f64(f64::from_bits(1), c));
+            let tiny = select(c == 0.0, c, copysign_f64(MIN_SUBNORMAL, c));
             let cs = select(cexp - k < -600i32, tiny, scalbn(c, -k));
 
             let (uh, ul) = two_product(am, bm);
@@ -263,12 +277,23 @@ pub fn fma_f64(a: f64, b: f64, c: f64) -> f64 {
 /// discarded residual points.
 #[cube]
 pub fn fma_f32(a: f32, b: f32, c: f32) -> f32 {
-    let pa = f64::cast_from(a);
-    let pb = f64::cast_from(b);
-    let pc = f64::cast_from(c);
-    let prod = pa * pb; // exact
-    let (sum, err) = two_sum(prod, pc);
-    f32::cast_from(round_odd(sum, err))
+    let a = crate::bits::opaque32(a);
+    let b = crate::bits::opaque32(b);
+    let c = crate::bits::opaque32(c);
+    // Non-finite operands take the fallback, because `two_sum` needs finite
+    // operands to have an exact residual. The fallback multiplies in `f64`
+    // rather than `f32`: the exact product of two `f32`s always fits, so
+    // `fma(MAX, MAX, -inf)` comes out as the `-inf` IEEE asks for instead of
+    // the NaN an `f32` product would overflow into first. Every input that
+    // reaches it has a special value for an answer, so the two roundings it
+    // costs land on a value that is exactly representable anyway.
+    let mut out = f32::cast_from(f64::cast_from(a) * f64::cast_from(b) + f64::cast_from(c));
+    if crate::bits::is_finite32(a) && crate::bits::is_finite32(b) && crate::bits::is_finite32(c) {
+        let prod = f64::cast_from(a) * f64::cast_from(b); // exact
+        let (sum, err) = two_sum(prod, f64::cast_from(c));
+        out = f32::cast_from(round_odd(sum, err));
+    }
+    out
 }
 
 /// Round `(rh + rl) * 2^k` onto the subnormal grid, correctly.
@@ -312,10 +337,14 @@ pub fn is_odd_integer(f: f64) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `|x|` with the sign of `y`.
+///
+/// Built from `abs` and negation rather than from bit manipulation, because
+/// `x` is a constant at one of the call sites below and the C++ backends
+/// cannot reinterpret a constant. See `crate::double::exact::copysign`.
 #[cube]
 pub fn copysign_f64(x: f64, y: f64) -> f64 {
-    let m = 0x8000_0000_0000_0000u64;
-    f64::reinterpret((u64::reinterpret(x) & !m) | (u64::reinterpret(y) & m))
+    let a = f64::abs(x);
+    select(u64::reinterpret(y) & 0x8000_0000_0000_0000u64 != 0u64, -a, a)
 }
 
 /// The exponent `e` such that `|x|` is in `[2^e, 2^(e+1))`, with subnormals

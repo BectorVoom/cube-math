@@ -27,9 +27,9 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::bits::inf64;
-use crate::tables::arena::{OFF_EXP, OFF_POW};
+use crate::config::MathConfig;
+use crate::bits::{inf64, neg_inf64};
+use crate::tables::consts::{exp_tab, pow_tab};
 use crate::tables::double::exp as et;
 use crate::tables::double::pow as pt;
 
@@ -97,7 +97,9 @@ pub fn is_signaling(x: f64) -> bool {
 
 /// `x^y`.
 #[cube]
-pub fn pow(x: f64, y: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn pow(x: f64, y: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
+    let y = crate::bits::opaque64(y);
     let mut ix = u64::reinterpret(x);
     let iy = u64::reinterpret(y);
     let mut topx = top12(x);
@@ -164,18 +166,18 @@ pub fn pow(x: f64, y: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
 
     if !done {
         let _ = comptime!(cfg);
-        let (hi, lo) = pow_log(ix, tab);
+        let (hi, lo) = pow_log(ix);
         // `y * (hi + lo)` as an unevaluated pair, both products fused.
         let ehi = y * hi;
         let elo = fma(y, lo, fma(y, hi, -ehi));
-        out = pow_exp(ehi, elo, sign_bias, tab);
+        out = pow_exp(ehi, elo, sign_bias);
     }
     out
 }
 
 /// `log(x)` to better than double precision, as an unevaluated pair.
 #[cube]
-pub fn pow_log(ix: u64, tab: &Array<u64>) -> (f64, f64) {
+pub fn pow_log(ix: u64) -> (f64, f64) {
     let tmp = ix - OFF;
     let i = usize::cast_from((tmp >> 45u64) & 127u64);
     let k = i64::reinterpret(tmp) >> 52i64;
@@ -183,7 +185,8 @@ pub fn pow_log(ix: u64, tab: &Array<u64>) -> (f64, f64) {
     let z = f64::reinterpret(iz);
     let kd = f64::cast_from(k);
 
-    let base = OFF_POW as usize + 3usize * i;
+    let tab = pow_tab();
+    let base = 3usize * i;
     let invc = f64::reinterpret(tab[base]);
     let logc = f64::reinterpret(tab[base + 1]);
     let logctail = f64::reinterpret(tab[base + 2]);
@@ -211,7 +214,7 @@ pub fn pow_log(ix: u64, tab: &Array<u64>) -> (f64, f64) {
 
 /// `e^(x + xtail)`, with a sign the exponent's parity may have set.
 #[cube]
-pub fn pow_exp(x: f64, xtail: f64, sign_bias: u64, tab: &Array<u64>) -> f64 {
+pub fn pow_exp(x: f64, xtail: f64, sign_bias: u64) -> f64 {
     let abstop = top12(x) & 0x7ffu32;
     let mut out = 0.0;
     let mut done = false;
@@ -224,7 +227,10 @@ pub fn pow_exp(x: f64, xtail: f64, sign_bias: u64, tab: &Array<u64>) -> f64 {
     } else if abstop >= 0x409u32 {
         let neg = u64::reinterpret(x) >> 63u64 != 0u64;
         let zero = select(sign_bias != 0u64, -0.0, 0.0);
-        let big = select(sign_bias != 0u64, -inf64(), inf64());
+        // `neg_inf64()` rather than `-inf64()`: negating the constant lets the
+        // optimiser fold it back into a literal infinity, which the C++
+        // backends have no spelling for. Each sign reads its own bit pattern.
+        let big = select(sign_bias != 0u64, neg_inf64(), inf64());
         out = select(neg, zero, big);
         done = true;
     }
@@ -237,7 +243,8 @@ pub fn pow_exp(x: f64, xtail: f64, sign_bias: u64, tab: &Array<u64>) -> f64 {
         let kd = kd_s - et::SHIFT;
         let r = fma(kd, et::NEGLN2LON, fma(kd, et::NEGLN2HIN, x)) + xtail;
 
-        let idx = usize::cast_from(2u64 * (ki % 128u64)) + OFF_EXP as usize;
+        let tab = exp_tab();
+        let idx = usize::cast_from(2u64 * (ki % 128u64));
         let top = (ki + sign_bias) << 45u64;
         let tail = f64::reinterpret(tab[idx]);
         let sbits = tab[idx + 1] + top;

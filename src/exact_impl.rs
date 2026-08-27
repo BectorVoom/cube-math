@@ -1,38 +1,18 @@
-//! The functions IEEE-754 pins down exactly.
-//!
-//! Rounding to an integer, sign and exponent manipulation, `fmod`,
-//! `remainder`, `sqrt`. What these have in common is that there is no
-//! approximation anywhere in them: the mathematically correct result is always
-//! representable, or — for `sqrt` — IEEE-754 requires it to be correctly
-//! rounded. So there is no reference *algorithm* to reproduce. Any
-//! implementation that is correct is automatically bit-identical to the
-//! platform's, on every input, on every device, forever.
-//!
-//! That is a much stronger footing than the rest of the crate stands on, and
-//! it is why:
-//!
-//! * both policy axes are genuine no-ops here — there is no cheaper
-//!   approximation worth having and no special case for `FullRange` to repair,
-//!   because the special cases are on the main path at no cost;
-//! * these need no fused multiply-add, so they are exact even on a backend
-//!   [`crate::probe`] rejects for everything else;
-//! * bit-exactness here is not a claim about this platform's `libm`.
-//!
-//! # One source, two precisions
+//! The functions IEEE-754 pins down exactly, as one template.
 //!
 //! Unlike the transcendentals — whose algorithms genuinely differ between
 //! precisions — these are the same code with different field widths, so they
-//! are written once inside a macro and instantiated twice. A `#[cube]`
-//! function cannot be generic over a precision the way `rmath`'s are, because
-//! the bit reinterpretations need a concrete integer type of matching width;
-//! the macro gives the same single-source guarantee by a different route.
+//! are written once here and instantiated twice, by [`crate::double::exact`]
+//! and [`crate::single::exact`].
+//!
+//! A `#[cube]` function cannot be generic over precision the way `rmath`'s
+//! are: the bit reinterpretations need a concrete integer type of matching
+//! width. The macro gives the same single-source guarantee by another route.
 
-use cubecl::prelude::*;
-
+/// Generate the IEEE-exact family for one precision.
 macro_rules! exact_for {
     (
-        $(#[$doc:meta])*
-        $mod:ident, $f:ident, $u:ident,
+        $f:ident, $u:ident,
         mant: $mant:expr,
         mant_i: $mant_i:expr,
         sign: $sign:expr,
@@ -45,10 +25,9 @@ macro_rules! exact_for {
         two_pow_mant: $tpm:expr,
         min_positive: $minpos:expr,
         inf: $inf:path,
+        opaque: $opaque:path,
     ) => {
-$(#[$doc])*
-pub mod $mod {
-    use super::*;
+    use cubecl::prelude::*;
 
     /// Zero, as a named constant.
     const ZERO: $f = 0.0;
@@ -60,6 +39,8 @@ pub mod $mod {
     const UZERO: $u = 0;
     /// A signed zero, for the quotient counters.
     const IZERO: i32 = 0;
+    /// The smallest positive value of this precision.
+    const MIN_SUBNORMAL: $f = $f::from_bits($one);
 
 
     /// True when `x` is NaN.
@@ -84,11 +65,21 @@ pub mod $mod {
 
     /// The magnitude of `x` with the sign of `y`.
     ///
-    /// Pure bit manipulation, so it is exact for every input including zeros,
-    /// infinities and NaN — which is what the C `copysign` contract requires.
+    /// Exact for every input including zeros, infinities and NaN, which is
+    /// what the C `copysign` contract requires: `abs` clears a sign bit and
+    /// negation flips one, and neither touches anything else.
+    ///
+    /// Not the more obvious `reinterpret((bits(x) & !SIGN) | (bits(y) & SIGN))`
+    /// — that reinterprets `x`, and `x` is often a constant here
+    /// (`copysign(0.0, x)` appears in `modf`, `fmod` and `remquo`). The C++
+    /// backends compile a reinterpretation to `reinterpret_cast<T const&>`,
+    /// which needs an lvalue, and a constant is not one. Only `y` is
+    /// reinterpreted below, and `y` is always a runtime value.
     #[cube]
     pub fn copysign(x: $f, y: $f) -> $f {
-        $f::reinterpret(($u::reinterpret(x) & !$sign) | ($u::reinterpret(y) & $sign))
+        let y = $opaque(y);
+        let a = $f::abs(x);
+        select($u::reinterpret(y) & $sign != UZERO, -a, a)
     }
 
     /// `2^k`, built straight into the exponent field.
@@ -107,19 +98,22 @@ pub mod $mod {
 
     /// Largest integer not greater than `x`.
     #[cube]
-    pub fn floor(x: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn floor(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
         $f::floor(x)
     }
 
     /// Smallest integer not less than `x`.
     #[cube]
-    pub fn ceil(x: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn ceil(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
         $f::ceil(x)
     }
 
     /// `x` truncated towards zero.
     #[cube]
-    pub fn trunc(x: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn trunc(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
         $f::trunc(x)
     }
 
@@ -128,13 +122,15 @@ pub mod $mod {
     /// Both policy axes are no-ops: IEEE-754 *requires* square root to be
     /// correctly rounded, and every device implements it as one instruction.
     #[cube]
-    pub fn sqrt(x: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn sqrt(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
         $f::sqrt(x)
     }
 
     /// `|x|`.
     #[cube]
-    pub fn abs(x: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn abs(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
         $f::abs(x)
     }
 
@@ -148,7 +144,8 @@ pub mod $mod {
     /// rounding, and it passes signed zeros, subnormals and NaN payloads
     /// through untouched.
     #[cube]
-    pub fn round(x: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn round(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
         $f::trunc(x + copysign($hmu, x))
     }
 
@@ -160,7 +157,8 @@ pub mod $mod {
     /// intrinsic, because the intrinsics disagree about ties across backends
     /// and this does not: the addition itself rounds, in the one mode there is.
     #[cube]
-    pub fn rint(x: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn rint(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
         let a = $f::abs(x);
         // Past `2^mant` every value is already an integer, and the trick would
         // overflow the significand. That branch also catches infinities and
@@ -175,7 +173,9 @@ pub mod $mod {
     /// keeps `fdim(inf, inf)` at `+0` — the difference is NaN there, but
     /// neither argument is.
     #[cube]
-    pub fn fdim(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn fdim(x: $f, y: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
+        let y = $opaque(y);
         let quiet = select(is_nan(x) || is_nan(y), x + y, 0.0);
         select(x > y, x - y, quiet)
     }
@@ -187,14 +187,18 @@ pub mod $mod {
     /// return the first, which pins `fmax(+0, -0)` to `+0` and `fmax(-0, +0)`
     /// to `-0` — C leaves that unspecified, and this is what glibc does.
     #[cube]
-    pub fn fmax(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn fmax(x: $f, y: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
+        let y = $opaque(y);
         select(x >= y || (!is_nan(x) && is_nan(y)), x, y)
     }
 
     /// The smaller of `x` and `y`, ignoring NaN. See [`fmax()`] for the NaN and
     /// signed-zero conventions.
     #[cube]
-    pub fn fmin(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn fmin(x: $f, y: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
+        let y = $opaque(y);
         select(x <= y || (!is_nan(x) && is_nan(y)), x, y)
     }
 
@@ -211,7 +215,9 @@ pub mod $mod {
     /// field, and scaling up before down keeps a result that ends up subnormal
     /// from being rounded twice.
     #[cube]
-    pub fn ldexp(x: $f, n: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn ldexp(x: $f, n: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
+        let n = $opaque(n);
         let mut out = x;
         // Zeros, infinities and NaN are fixed points: no exponent to shift.
         if x != 0.0 && !is_nan(x) && $f::abs(x) != $inf() {
@@ -266,7 +272,7 @@ pub mod $mod {
     /// `FLT_RADIX` is 2, and glibc makes the second a literal alias of the
     /// first. So this is [`ldexp()`], not a second algorithm.
     #[cube]
-    pub fn scalbn(x: $f, n: $f, #[comptime] cfg: crate::config::Config) -> $f {
+    pub fn scalbn(x: $f, n: $f, #[comptime] cfg: crate::config::MathConfig) -> $f {
         ldexp(x, n, cfg)
     }
 
@@ -282,7 +288,8 @@ pub mod $mod {
     /// in both precisions (it is `-2^31`) but `INT_MAX` is not representable
     /// in `f32` and arrives as `2147483648`.
     #[cube]
-    pub fn ilogb(x: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn ilogb(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
         let a = $f::abs(x);
         let mut out = ILOGB0.runtime();
         if a == $inf() {
@@ -306,7 +313,8 @@ pub mod $mod {
     /// [`ldexp()`]'s argument arrives in one, and it is always an exact small
     /// integer.
     #[cube]
-    pub fn frexp(x: $f, #[comptime] _cfg: crate::config::Config) -> ($f, $f) {
+    pub fn frexp(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> ($f, $f) {
+        let x = $opaque(x);
         let mut frac = x;
         let mut e = ZERO.runtime();
         // Zero, infinity and NaN have no significand to normalise; C leaves
@@ -334,7 +342,8 @@ pub mod $mod {
     /// an infinite `x` is selected out, because `inf - inf` is NaN where C
     /// requires `(±0, ±inf)`.
     #[cube]
-    pub fn modf(x: $f, #[comptime] _cfg: crate::config::Config) -> ($f, $f) {
+    pub fn modf(x: $f, #[comptime] _cfg: crate::config::MathConfig) -> ($f, $f) {
+        let x = $opaque(x);
         let int = $f::trunc(x);
         let frac = copysign(x - int, x);
         let inf = $f::abs(x) == $inf();
@@ -343,7 +352,9 @@ pub mod $mod {
 
     /// The next representable value after `x` in the direction of `y`.
     #[cube]
-    pub fn nextafter(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn nextafter(x: $f, y: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
+        let y = $opaque(y);
         let mut out = x + y; // NaN in, NaN out — with a payload, and quietened
         if !is_nan(x) && !is_nan(y) {
             if x == y {
@@ -352,7 +363,7 @@ pub mod $mod {
                 out = y;
             } else if x == 0.0 {
                 // Step off zero into the smallest subnormal, signed towards `y`.
-                out = copysign($f::reinterpret($one), y);
+                out = copysign(MIN_SUBNORMAL, y);
             } else {
                 // Away from zero when `y` lies further out in the same
                 // direction as `x`'s sign, towards zero otherwise. Magnitude
@@ -371,7 +382,9 @@ pub mod $mod {
 
     /// `x` reduced modulo `y`, with the sign of `x`.
     #[cube]
-    pub fn fmod(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn fmod(x: $f, y: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
+        let y = $opaque(y);
         let (r, _odd) = reduce(x, y);
         r
     }
@@ -383,7 +396,9 @@ pub mod $mod {
     /// rather than towards zero — so the result can take either sign and
     /// satisfies `|r| <= |y| / 2`.
     #[cube]
-    pub fn remainder(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn remainder(x: $f, y: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
+        let x = $opaque(x);
+        let y = $opaque(y);
         let (r, odd) = reduce(x, y);
         let mut out = r;
         if !is_nan(r) && $f::abs(y) != $inf() {
@@ -456,7 +471,7 @@ pub mod $mod {
 
     /// [`copysign()`] in the two-argument kernel shape.
     #[cube]
-    pub fn copysign_fn(x: $f, y: $f, #[comptime] _cfg: crate::config::Config) -> $f {
+    pub fn copysign_fn(x: $f, y: $f, #[comptime] _cfg: crate::config::MathConfig) -> $f {
         copysign(x, y)
     }
 
@@ -473,7 +488,9 @@ pub mod $mod {
     /// goes. Every step is exact — Sterbenz again — so this agrees with the
     /// platform by construction rather than by measurement.
     #[cube]
-    pub fn remquo(x: $f, y: $f, #[comptime] cfg: crate::config::Config) -> ($f, $f) {
+    pub fn remquo(x: $f, y: $f, #[comptime] cfg: crate::config::MathConfig) -> ($f, $f) {
+        let x = $opaque(x);
+        let y = $opaque(y);
         let sx = $u::reinterpret(x) & $sign;
         let negq = (sx ^ ($u::reinterpret(y) & $sign)) != UZERO;
 
@@ -533,40 +550,7 @@ pub mod $mod {
         }
         (rem, quo)
     }
-}
     };
 }
 
-exact_for! {
-    /// Double precision.
-    double, f64, u64,
-    mant: 52u64,
-    mant_i: 52i32,
-    sign: 0x8000_0000_0000_0000u64,
-    exp_mask: 0x7ffu64,
-    exp_field: 0x7ff0_0000_0000_0000u64,
-    one: 1u64,
-    bias: 1023i32,
-    max_biased_exp: 2046u32,
-    half_minus_ulp: 0.49999999999999994f64,
-    two_pow_mant: 4503599627370496.0f64,
-    min_positive: 2.2250738585072014e-308f64,
-    inf: crate::cube::bits::inf64,
-}
-
-exact_for! {
-    /// Single precision.
-    single, f32, u32,
-    mant: 23u32,
-    mant_i: 23i32,
-    sign: 0x8000_0000u32,
-    exp_mask: 0xffu32,
-    exp_field: 0x7f80_0000u32,
-    one: 1u32,
-    bias: 127i32,
-    max_biased_exp: 254u32,
-    half_minus_ulp: 0.49999997f32,
-    two_pow_mant: 8388608.0f32,
-    min_positive: 1.1754943508222875e-38f32,
-    inf: crate::cube::bits::inf32,
-}
+pub(crate) use exact_for;

@@ -13,9 +13,9 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::bits::is_nan64;
-use crate::cube::fma::{FmaKind, fma64};
+use crate::config::MathConfig;
+use crate::bits::is_nan64;
+use crate::fma::{FmaKind, fma64};
 
 /// `ln(DBL_MAX)`, above which `e^x - 1` overflows.
 const OTHRESHOLD: f64 = f64::from_bits(0x40862e42fefa39ef);
@@ -37,11 +37,12 @@ const Q4: f64 = f64::from_bits(0xbe8afdb76e09c32d);
 
 /// `e^x - 1`.
 #[cube]
-pub fn expm1(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn expm1(x: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     if comptime!(cfg.bit_exact()) {
         bit_exact(x)
     } else {
-        fast(x, tab, comptime!(cfg.checked()), comptime!(cfg.fma()))
+        fast(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
 }
 
@@ -147,8 +148,8 @@ pub fn bit_exact(x0: f64) -> f64 {
 ///
 /// Maximum error measured against the correctly rounded result: below 2 ulp.
 #[cube]
-pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
-    let mut out = fma64(crate::cube::double::exp::fast(x, tab, checked, fk), 1.0, -1.0, fk);
+pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
+    let mut out = fma64(crate::double::exp::fast(x, checked, fk), 1.0, -1.0, fk);
     if f64::abs(x) < 0.35 {
         // `e^x - 1 = x + x^2/2 + ...`, evaluated so the leading `x` survives.
         let hfx = 0.5 * x;

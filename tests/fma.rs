@@ -13,7 +13,7 @@
 
 mod harness;
 
-use cube_math::cube::fma::{fma_f32, fma_f64};
+use cube_math::fma::{fma_f32, fma_f64};
 use cubecl::prelude::*;
 use harness::{Rng, same_f32, same_f64};
 
@@ -127,7 +127,7 @@ fn cases() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
         );
     }
     // Ordinary magnitudes: where a polynomial evaluation actually lives.
-    let mut ord = |r: &mut Rng| {
+    let ord = |r: &mut Rng| {
         let m = (r.next() >> 12) as f64 / (1u64 << 52) as f64 + 1.0;
         let e = (r.next() % 41) as i32 - 20;
         let sign = if r.next() & 1 == 0 { 1.0 } else { -1.0 };
@@ -167,7 +167,7 @@ fn check<R: Runtime>(backend: &str) {
     // it is wrong, and `Fidelity` already says so by refusing to call the
     // precision bit-exact-capable. Testing it there would be testing something
     // the crate does not claim.
-    let fidelity = cube_math::probe::Fidelity::measure(&client);
+    let fidelity = cube_math::fidelity(&client);
     if !fidelity.f64.usable || !fidelity.f64.stable_arithmetic {
         eprintln!(
             "[{backend}] skipping: the software multiply-add needs arithmetic this \
@@ -258,4 +258,10 @@ fn cpu_runtime() {
 #[test]
 fn wgpu_runtime() {
     check::<cubecl::wgpu::WgpuRuntime>("wgpu");
+}
+
+#[cfg(feature = "hip")]
+#[test]
+fn hip_runtime() {
+    check::<cubecl::hip::HipRuntime>("hip");
 }

@@ -12,22 +12,27 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::bits::inf64;
-use crate::cube::fma::{FmaKind, fma64};
-use crate::tables::arena::OFF_EXP;
+use crate::config::MathConfig;
+use crate::bits::inf64;
+use crate::fma::{FmaKind, fma64};
+use crate::tables::consts::exp_tab;
 use crate::tables::double::exp as t;
 
 /// `2^-1022`, the down-scale the `k < 0` fix-up arm undoes.
 const P_M1022: f64 = f64::from_bits(0x0010000000000000);
+/// `bits(-1075.0)`, the underflow threshold, compared as a bit pattern.
+const NEG_1075_BITS: u64 = (-1075.0f64).to_bits();
+/// `bits(928.0)`, above which the scale factor alone can leave the range.
+const BITS_928: u64 = 928.0f64.to_bits();
 
 /// `2^x`.
 #[cube]
-pub fn exp2(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
+pub fn exp2(x: f64, #[comptime] cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     if comptime!(cfg.bit_exact()) {
-        bit_exact(x, tab)
+        bit_exact(x)
     } else {
-        fast(x, tab, comptime!(cfg.checked()), comptime!(cfg.fma()))
+        fast(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
 }
 
@@ -39,7 +44,7 @@ pub fn exp2(x: f64, tab: &Array<u64>, #[comptime] cfg: Config) -> f64 {
 /// magnitude comparison against 928 — the point above which the scale factor
 /// alone can leave the exponent range while the result is still finite.
 #[cube]
-pub fn bit_exact(x: f64, tab: &Array<u64>) -> f64 {
+pub fn bit_exact(x: f64) -> f64 {
     let bits = u64::reinterpret(x);
     let abstop = u32::cast_from(bits >> 52u64) & 0x7ffu32;
     // The initial value is the `|x| < 2^-54` answer, where `2^x` rounds to
@@ -52,11 +57,11 @@ pub fn bit_exact(x: f64, tab: &Array<u64>) -> f64 {
         out = select(bits == 0xfff0_0000_0000_0000u64, 0.0, 1.0 + x);
     } else if abstop >= 0x409u32 && bits >> 63u64 == 0u64 {
         out = inf64(); // genuine overflow
-    } else if abstop >= 0x409u32 && bits >= u64::reinterpret(-1075.0f64) {
+    } else if abstop >= 0x409u32 && bits >= NEG_1075_BITS {
         out = 0.0; // genuine underflow
     } else {
-        let (tmp, sbits, ki) = core(x, tab);
-        if (bits << 1u64) > (u64::reinterpret(928.0f64) << 1u64) {
+        let (tmp, sbits, ki) = core(x);
+        if (bits << 1u64) > (BITS_928 << 1u64) {
             out = specialcase(tmp, sbits, ki);
         } else {
             let scale = f64::reinterpret(sbits);
@@ -71,13 +76,14 @@ pub fn bit_exact(x: f64, tab: &Array<u64>) -> f64 {
 /// Every operation here is a separate multiply and add on purpose. See the
 /// module documentation.
 #[cube]
-pub fn core(x: f64, tab: &Array<u64>) -> (f64, u64, u64) {
+pub fn core(x: f64) -> (f64, u64, u64) {
     let kd_s = x + t::EXP2_SHIFT;
     let ki = u64::reinterpret(kd_s);
     let kd = kd_s - t::EXP2_SHIFT;
     let r = x - kd;
 
-    let idx = usize::cast_from((ki & 127u64) * 2u64) + OFF_EXP as usize;
+    let tab = exp_tab();
+    let idx = usize::cast_from((ki & 127u64) * 2u64);
     let tail = f64::reinterpret(tab[idx]);
     let sbits = tab[idx + 1] + (ki << 45u64);
 
@@ -143,7 +149,7 @@ const G13: f64 = 1.3691488853904124e-12;
 /// Maximum error measured against the correctly rounded result: below 1 ulp
 /// over `|x| < 1000`.
 #[cube]
-pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
+pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
     let kd_s = x + t::SHIFT;
     let kd = kd_s - t::SHIFT;
     let r = x - kd;
@@ -178,7 +184,7 @@ pub fn fast(x: f64, tab: &Array<u64>, #[comptime] checked: bool, #[comptime] fk:
         // that is the right place for them.
         let abstop = u32::cast_from(u64::reinterpret(x) >> 52u64) & 0x7ffu32;
         if abstop >= 0x408u32 || abstop < 0x3c9u32 {
-            out = bit_exact(x, tab);
+            out = bit_exact(x);
         }
     }
     out

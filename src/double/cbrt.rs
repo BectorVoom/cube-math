@@ -23,7 +23,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
+use crate::config::MathConfig;
+use crate::tables::consts::f64_const;
 
 /// `2^(i/3)` for `i` in `0..3`.
 const ESCALE0: f64 = 1.0;
@@ -63,7 +64,8 @@ pub fn escale(it: u32) -> f64 {
 
 /// `x^(1/3)`.
 #[cube]
-pub fn cbrt(x: f64, #[comptime] _cfg: Config) -> f64 {
+pub fn cbrt(x: f64, #[comptime] _cfg: MathConfig) -> f64 {
+    let x = crate::bits::opaque64(x);
     let hx = u64::reinterpret(x);
     let sign = hx >> 63u64;
     let ix = hx & 0x7fff_ffff_ffff_ffffu64;
@@ -139,11 +141,11 @@ pub fn cbrt(x: f64, #[comptime] _cfg: Config) -> f64 {
             // Still undecidable: two inputs are hard enough to be tabulated.
             if ady0 < P_M98 || ady1 < P_M98 {
                 let azz = f64::abs(zz);
-                if azz == f64::reinterpret(0x4009b78223aa307cu64) {
-                    y1 = copysign(f64::reinterpret(0x3ff79d15d0e8d59cu64), zz);
+                if azz == f64_const(0x4009b78223aa307cu64) {
+                    y1 = copysign(f64_const(0x3ff79d15d0e8d59cu64), zz);
                 }
-                if azz == f64::reinterpret(0x401a202bfc89ddffu64) {
-                    y1 = copysign(f64::reinterpret(0x3ffde87aa837820fu64), zz);
+                if azz == f64_const(0x401a202bfc89ddffu64) {
+                    y1 = copysign(f64_const(0x3ffde87aa837820fu64), zz);
                 }
             }
         }
@@ -169,8 +171,11 @@ pub fn cbrt(x: f64, #[comptime] _cfg: Config) -> f64 {
 }
 
 /// The magnitude of `x` with the sign of `y`.
+///
+/// See `crate::double::exact::copysign` for why this is `abs` and a negation
+/// rather than bit manipulation.
 #[cube]
 pub fn copysign(x: f64, y: f64) -> f64 {
-    let m = 0x8000_0000_0000_0000u64;
-    f64::reinterpret((u64::reinterpret(x) & !m) | (u64::reinterpret(y) & m))
+    let a = f64::abs(x);
+    select(u64::reinterpret(y) & 0x8000_0000_0000_0000u64 != 0u64, -a, a)
 }

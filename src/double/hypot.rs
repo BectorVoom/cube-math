@@ -14,8 +14,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::Config;
-use crate::cube::bits::{inf64, is_finite64};
+use crate::config::MathConfig;
+use crate::bits::{inf64, is_finite64};
 
 /// `2^-600`: the down-scale for the huge-`ax` branch.
 const SCALE: f64 = f64::from_bits(0x1a70000000000000);
@@ -67,7 +67,9 @@ pub fn kernel(ax: f64, ay: f64) -> f64 {
 
 /// `sqrt(x^2 + y^2)`.
 #[cube]
-pub fn hypot(x0: f64, y0: f64, #[comptime] _cfg: Config) -> f64 {
+pub fn hypot(x0: f64, y0: f64, #[comptime] _cfg: MathConfig) -> f64 {
+    let x0 = crate::bits::opaque64(x0);
+    let y0 = crate::bits::opaque64(y0);
     let mut out = x0 + y0;
     if !is_finite64(x0) || !is_finite64(y0) {
         // An infinity wins over a quiet NaN — `hypot(inf, NaN)` is `inf` —
