@@ -18,6 +18,9 @@ macro_rules! exact_for {
         sign: $sign:expr,
         exp_mask: $exp_mask:expr,
         exp_field: $exp_field:expr,
+        mant_mask: $mant_mask:expr,
+        top: $top:expr,
+        top_bit: $top_bit:expr,
         one: $one:expr,
         bias: $bias:expr,
         max_biased_exp: $max_be:expr,
@@ -426,9 +429,17 @@ macro_rules! exact_for {
     ///
     /// The shift-and-subtract loop runs one iteration per binary digit of the
     /// quotient, which is up to the width of the exponent range. That is the
-    /// same work `rmath` does and the same work glibc does; on a GPU it is
-    /// also the one place in this module where threads in a warp can diverge
-    /// badly, since the trip count depends on the ratio of the arguments.
+    /// same work glibc does; on a GPU it is also the one place in this module
+    /// where threads in a warp can diverge badly, since the trip count depends
+    /// on the ratio of the arguments.
+    ///
+    /// The digits are produced on the *significands as integers*, not on the
+    /// floats. Both forms are exact, so both are equally bit-exact — but the
+    /// float form needs two passes (walk `|y|` up to `|x|`, then back down)
+    /// and four double-precision operations per digit, where this one needs a
+    /// single pass and a handful of integer operations. On a device whose
+    /// double-precision rate is a fraction of its integer rate, that is most
+    /// of the cost of `fmod` and `remainder`.
     #[cube]
     pub fn reduce(x: $f, y: $f) -> ($f, bool) {
         let ax = $f::abs(x);
@@ -445,28 +456,94 @@ macro_rules! exact_for {
             out = copysign(0.0, x);
             odd = true;
         } else {
-            // Largest `|y| * 2^j` that does not exceed `ax`. `d + d` rather
-            // than `d * 2` so the overflow case saturates to infinity and
-            // stops the walk instead of wrapping.
-            let mut d = ay;
-            while d + d <= ax {
-                d = d + d;
-            }
-            // Walk back down, one binary digit of the quotient per step. The
-            // guard is `>= ay` rather than a flag because halving past `ay`
-            // ends the walk on its own, including when `ay` is the smallest
-            // subnormal and the halving rounds to zero.
-            let mut r = ax;
-            while d >= ay {
-                if r >= d {
-                    r = r - d;
-                    odd = d == ay;
+            // `(significand, unbiased-in-the-stored-sense exponent)` for both,
+            // with the implicit bit made explicit so that a subnormal and a
+            // normal are the same shape from here on.
+            let (mut r, mut e) = normalise(ax);
+            let (dy, ey) = normalise(ay);
+
+            // One quotient digit per exponent step. The invariant is
+            // `r < 2 * dy` on entry to each iteration, so the subtraction
+            // never borrows past the top of the field and the doubling never
+            // overflows.
+            let mut exact = FALSE.runtime();
+            while e > ey && !exact {
+                let i = r - dy;
+                if i >> $top_bit == UZERO {
+                    r = i;
+                    exact = i == UZERO;
                 }
-                d = d * 0.5;
+                if !exact {
+                    // Bring down the next digit. `r + r` rather than a shift
+                    // by one so that the width of the shift amount does not
+                    // have to be spelled per precision.
+                    r = r + r;
+                    e -= 1i32;
+                }
             }
-            out = copysign(r, x);
+            // The last digit, the one worth `ay` itself: its value is what
+            // `remainder` needs to know about the quotient's parity.
+            if !exact {
+                let i = r - dy;
+                if i >> $top_bit == UZERO {
+                    r = i;
+                    odd = true;
+                }
+                exact = r == UZERO;
+            }
+
+            if exact {
+                out = copysign(0.0, x);
+            } else {
+                // Renormalise: the remainder is below `ay`, so its leading bit
+                // has moved down by however many digits came out as zero.
+                let sh = $u::leading_zeros(r) - ($top - 1u32);
+                r = r << $u::cast_from(sh);
+                e -= i32::cast_from(sh);
+                out = copysign(assemble(r, e), x);
+            }
         }
         (out, odd)
+    }
+
+    /// `|a|` as `(significand, biased exponent)`, with the implicit bit set.
+    ///
+    /// A subnormal is shifted up until its leading bit sits where a normal's
+    /// implicit one would, and the exponent goes negative to match — so the
+    /// value is `significand * 2^(e - BIAS - MANT)` either way, and the digit
+    /// loop above needs no second case. `a` must be a positive finite number.
+    #[cube]
+    pub fn normalise(a: $f) -> ($u, i32) {
+        let u = $u::reinterpret(a);
+        let e = i32::cast_from(u >> $mant);
+        let lz = $u::leading_zeros(u);
+        let norm = (u & $mant_mask) | ($one << $mant);
+        let mut m = norm;
+        let mut ee = e;
+        if e == 0i32 {
+            // Subnormal: the leading bit is `lz` from the top and wants to sit
+            // at `MANT`, so it moves up by `lz - (TOP - 1)`, and the exponent
+            // — which reads as zero — moves down by the same.
+            m = u << $u::cast_from(lz - ($top - 1u32));
+            ee = 1i32 - i32::cast_from(lz - ($top - 1u32));
+        }
+        (m, ee)
+    }
+
+    /// The float whose value is `r * 2^(e - BIAS - MANT)`, given `r`
+    /// normalised so its bit `MANT` is set.
+    ///
+    /// `e` may be zero or negative, which is the subnormal case: the field
+    /// cannot hold the exponent, so the significand is shifted down instead.
+    /// That shift is exact — every bit it drops is zero, because a subnormal
+    /// remainder has that many trailing zeros by construction.
+    #[cube]
+    pub fn assemble(r: $u, e: i32) -> $f {
+        let mut bits = (r - ($one << $mant)) | ($u::cast_from(e) << $mant);
+        if e <= 0i32 {
+            bits = r >> $u::cast_from(1i32 - e);
+        }
+        $f::reinterpret(bits)
     }
 
     /// [`copysign()`] in the two-argument kernel shape.

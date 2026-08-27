@@ -105,10 +105,23 @@ pub fn bit_exact(x: f64) -> f64 {
             // Past 2^52 the `+1` is a no-op, and glibc skips both it and
             // the correction it would need.
             let huge = hx >= 0x4340_0000u32 as i32;
-            let u = select(huge, x, 1.0 + x);
+            let mut u = x;
+            if !huge {
+                u = 1.0 + x;
+            }
             hu = u32::cast_from(u64::reinterpret(u) >> 32u64);
             k = (i32::reinterpret(hu) >> 20i32) - 1023i32;
-            c = select(huge, 0.0, select(k > 0i32, 1.0 - (u - x), x - (u - 1.0)) / u);
+            // Branches rather than `select` on both forms: the outer arm is a
+            // division, and the inner two share no arithmetic, so evaluating
+            // both spends a divide and two subtractions to discard three of
+            // the four results.
+            if !huge {
+                let mut num = x - (u - 1.0);
+                if k > 0i32 {
+                    num = 1.0 - (u - x);
+                }
+                c = num / u;
+            }
             hu = hu & 0x000f_ffffu32;
             let low32 = u64::reinterpret(u) & 0xffff_ffffu64;
             // `0x6a09e` is the top of `sqrt(2)`'s significand: below it the
@@ -144,10 +157,18 @@ pub fn tail(f: f64, hu: u32, k: i32, c: f64) -> f64 {
         // |f| < 2^-20. `1 - (2/3) f` is one fused operation here, not two
         // roundings.
         if f == 0.0 {
-            out = select(k == 0i32, 0.0, fma(kf, LN2_HI, c + kf * LN2_LO));
+            if k == 0i32 {
+                out = 0.0;
+            } else {
+                out = fma(kf, LN2_HI, c + kf * LN2_LO);
+            }
         } else {
             let r = fma(f, -0.66666666666666666, 1.0) * hfsq;
-            out = select(k == 0i32, f - r, kf * LN2_HI - ((r - (kf * LN2_LO + c)) - f));
+            if k == 0i32 {
+                out = f - r;
+            } else {
+                out = kf * LN2_HI - ((r - (kf * LN2_LO + c)) - f);
+            }
         }
     } else {
         let s = f / (2.0 + f);

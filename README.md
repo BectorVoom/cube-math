@@ -200,32 +200,36 @@ compile error inside a generated kernel rather than anything your source shows:
 
 `RUSTFLAGS="-C target-cpu=native" cargo run --release --features "cpu,hip" --example bench`,
 one million `f64`, data already resident, AMD Ryzen AI 7 350 with a Radeon
-860M. The flag matters for the CPU baselines and not for this crate: `rmath`
-and `libm` are compiled ahead of time and will not use the wide instructions
-unless told to, while a CubeCL kernel is compiled for the machine it is about
-to run on either way.
+860M, best of four runs — an integrated GPU shares its power budget with the
+cores it sits next to, so a single run measures the thermal state as much as
+the kernel. The flag matters for the CPU baselines and not for this crate:
+`rmath` and `libm` are compiled ahead of time and will not use the wide
+instructions unless told to, while a CubeCL kernel is compiled for the machine
+it is about to run on either way.
 
 | Melem/s | scalar `libm` | `rmath` (CPU SIMD) | **cube-math, CPU runtime** | **cube-math, ROCm** |
 |---|---|---|---|---|
-| `exp` | 391 | 664 | **689** | **1746** |
-| `ln` | 417 | 518 | **716** | **1306** |
-| `pow` | 142 | — | **336** | **659** |
-| `sqrt` | — | — | **765** | **1901** |
-| `rint` | — | — | **637** | **2996** |
-| `fmod` | — | — | **126** | **668** |
+| `exp` | 399 | 635 | **709** | **1857** |
+| `ln` | 412 | 514 | **755** | **1410** |
+| `pow` | 140 | — | **353** | **746** |
+| `sqrt` | — | — | **711** | **2048** |
+| `rint` | — | — | **714** | **3611** |
+| `fmod` | — | — | **177** | **1861** |
 
 All bit-exact — these are the `BitExact` policy's numbers, not `Fast`'s. The
-rest of the ported set lands between 405 (`log1p`) and 1428 (`exp10`) Melem/s
+rest of the ported set lands between 765 (`log1p`) and 1959 (`exp2`) Melem/s
 on ROCm.
 
-Two caveats worth stating. `fmod`'s shift-and-subtract loop runs one iteration
-per binary digit of the quotient — the same work glibc does — and it is the one
-place where neighbouring threads diverge badly. And these are *kernel* numbers,
-on data already on the device: a single call that uploads and reads back
-measures 225 Melem/s, and the difference is entirely the two transfers. Reach
-for the GPU when the data is already there, or when enough work happens per
-element to pay for the trip. That is also the argument for calling the device
-functions from inside your own kernel rather than launching one of these.
+Two caveats worth stating. `fmod`'s shift-and-subtract loop still runs one
+iteration per binary digit of the quotient — the same work glibc does — so it
+remains the one place where neighbouring threads diverge badly, and the trip
+count is set by the ratio of the arguments rather than by anything the kernel
+controls. And these are *kernel* numbers, on data already on the device: a
+single call that uploads and reads back measures 263 Melem/s, and the
+difference is entirely the two transfers. Reach for the GPU when the data is
+already there, or when enough work happens per element to pay for the trip.
+That is also the argument for calling the device functions from inside your own
+kernel rather than launching one of these.
 
 An integrated GPU runs `f64` at a small fraction of its `f32` rate, so the
 ROCm column is a floor, not a ceiling.

@@ -82,12 +82,21 @@ pub fn bit_exact(x0: f64) -> f64 {
             // Below 1.5 ln(2) the reduction's `k` is `+-1` and glibc skips the
             // multiply, taking the constant straight; above it, `k` is rounded
             // out of `x / ln(2)` and `k * LN2HI` is exact by construction.
-            let near = hx < 0x3FF0_A2B2u32;
-            let kf = i32::cast_from(INVLN2 * x0 + select(sign, -0.5, 0.5));
-            k = select(near, select(sign, -1i32, 1i32), kf);
-            let t = f64::cast_from(k);
-            let hi = select(near, select(sign, x0 + LN2HI, x0 - LN2HI), x0 - t * LN2HI);
-            let lo = select(near, select(sign, -LN2LO, LN2LO), t * LN2LO);
+            // A branch rather than `select` on both: the two arms share no
+            // arithmetic, so evaluating both spends five double-precision
+            // operations to throw four of them away.
+            let mut hi = 0.0;
+            let mut lo = 0.0;
+            if hx < 0x3FF0_A2B2u32 {
+                k = select(sign, -1i32, 1i32);
+                hi = select(sign, x0 + LN2HI, x0 - LN2HI);
+                lo = select(sign, -LN2LO, LN2LO);
+            } else {
+                k = i32::cast_from(INVLN2 * x0 + select(sign, -0.5, 0.5));
+                let t = f64::cast_from(k);
+                hi = x0 - t * LN2HI;
+                lo = t * LN2LO;
+            }
             x = hi - lo;
             c = (hi - x) - lo;
         } else if hx < 0x3c90_0000u32 {
@@ -115,7 +124,11 @@ pub fn bit_exact(x0: f64) -> f64 {
                 if k == -1i32 {
                     out = 0.5 * (x - e) - 0.5;
                 } else if k == 1i32 {
-                    out = select(x < -0.25, -2.0 * (e - (x + 0.5)), 1.0 + 2.0 * (x - e));
+                    if x < -0.25 {
+                        out = -2.0 * (e - (x + 0.5));
+                    } else {
+                        out = 1.0 + 2.0 * (x - e);
+                    }
                 } else if k < 0i32 || k > 56i32 {
                     let y0 = x - e + 1.0;
                     let y = select(
@@ -127,11 +140,11 @@ pub fn bit_exact(x0: f64) -> f64 {
                 } else {
                     let twopk = f64::reinterpret(u64::cast_from(1023i32 + k) << 52u64);
                     let uf = f64::reinterpret(u64::cast_from(1023i32 - k) << 52u64); // 2^-k
-                    out = select(
-                        k < 20i32,
-                        (x - e + (1.0 - uf)) * twopk,
-                        (x - (e + uf) + 1.0) * twopk,
-                    );
+                    if k < 20i32 {
+                        out = (x - e + (1.0 - uf)) * twopk;
+                    } else {
+                        out = (x - (e + uf) + 1.0) * twopk;
+                    }
                 }
             }
         }
