@@ -70,18 +70,30 @@
 //!
 //! # What is ported
 //!
-//! Everything IEEE-754 pins down exactly, in **both** precisions: `floor`,
-//! `ceil`, `trunc`, `round`, `rint`, `sqrt`, `abs`, `ilogb`, `copysign`,
-//! `fdim`, `fmax`, `fmin`, `ldexp`, `scalbn`, `fmod`, `remainder`,
-//! `nextafter`, `frexp`, `modf` and `remquo`.
+//! Everything, in **both** precisions.
 //!
-//! In double precision, the exponentials `exp`, `exp2`, `exp10` and `expm1`;
-//! the logarithms `ln`, `log2`, `log10` and `log1p`; and `pow`, `cbrt` and
-//! `hypot`.
+//! Everything IEEE-754 pins down exactly: `floor`, `ceil`, `trunc`, `round`,
+//! `rint`, `sqrt`, `abs`, `ilogb`, `copysign`, `fdim`, `fmax`, `fmin`,
+//! `ldexp`, `scalbn`, `fmod`, `remainder`, `nextafter`, `frexp`, `modf` and
+//! `remquo`. The exponentials `exp`, `exp2`, `exp10`, `expm1`; the logarithms
+//! `ln`, `log2`, `log10`, `log1p`; `pow`, `cbrt`, `hypot`; the trigonometric
+//! family `sin`, `cos`, `tan`, `sincos` and its inverse `asin`, `acos`,
+//! `atan`, `atan2`; the hyperbolics `sinh`, `cosh`, `tanh` and their inverses
+//! `asinh`, `acosh`, `atanh`; `erf` and `erfc`; `lgamma`, `lgamma_r` and
+//! `tgamma`; and the Bessel functions `j0`, `j1`, `y0`, `y1`, `jn`, `yn`.
 //!
-//! Not yet ported: the trigonometric, inverse-trigonometric, hyperbolic,
-//! error, gamma and Bessel families, and the single-precision transcendentals.
-//! The README says what adding one involves.
+//! Three things the port had to supply that `rmath` leaves to the platform,
+//! because on a CPU there is a platform to leave them to and a kernel has
+//! none: [`double::branred`], the Payne-Hanek reduction the trigonometric
+//! family needs past `105414350`; the accurate half of [`double::asinh`] and
+//! [`double::acosh`]; and schedule ports of `sinf`, `cosf`, `powf`, `atan2f`
+//! and the single-precision Bessel family, which `rmath` calls the platform
+//! for one lane at a time.
+//!
+//! [`single::wide`] is the one place `BitExact` is not an unconditional claim,
+//! and that module says so in as many words.
+//!
+//! The README says what adding a function involves.
 //!
 //! # Bit-exactness on a device
 //!

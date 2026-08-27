@@ -79,33 +79,79 @@ contains only the path you asked for.
 
 ## What is ported
 
+Everything. The whole of `libm`'s real-valued double and single precision, in
+both precisions, bit-exact to glibc over the equivalence sweep.
+
 | family | functions | `BitExact` | `Fast` |
 |---|---|---|---|
-| **exact** (`f64` **and** `f32`) | `floor` `ceil` `trunc` `round` `rint` `sqrt` `abs` `ilogb` `copysign` `fdim` `fmax` `fmin` `ldexp` `scalbn` `fmod` `remainder` `nextafter` `frexp` `modf` `remquo` | exact by construction, on every device | same code |
-| **exponentials** (`f64`) | `exp` `exp2` `exp10` `expm1` | reference schedule | table-free series, ≤ 2 ulp |
-| **logarithms** (`f64`) | `ln` `log2` `log10` `log1p` | reference schedule | table-free series, ≤ 3 ulp |
-| **algebraic** (`f64`) | `pow` `cbrt` `hypot` | reference schedule | *same code* — see below |
+| **exact** | `floor` `ceil` `trunc` `round` `rint` `sqrt` `abs` `ilogb` `copysign` `fdim` `fmax` `fmin` `ldexp` `scalbn` `fmod` `remainder` `nextafter` `frexp` `modf` `remquo` | exact by construction, on every device | same code |
+| **exponentials** | `exp` `exp2` `exp10` `expm1` | reference schedule | table-free series, ≤ 2 ulp |
+| **logarithms** | `ln` `log2` `log10` `log1p` | reference schedule | table-free series, ≤ 3 ulp |
+| **algebraic** | `pow` `cbrt` `hypot` | reference schedule | *same code* |
+| **trigonometric** | `sin` `cos` `tan` `sincos` | reference schedule, `__branred` included | *same code* |
+| **inverse trigonometric** | `asin` `acos` `atan` `atan2` | reference schedule | *same code* |
+| **hyperbolic** | `sinh` `cosh` `tanh` | reference schedule | ≤ 4 ulp |
+| **inverse hyperbolic** | `asinh` `acosh` `atanh` | `asinh`/`acosh` correctly rounded; `atanh` ≤ 4 ulp | `atanh` ≤ 4 ulp |
+| **error** | `erf` `erfc` | correctly rounded | *same code* |
+| **gamma** | `lgamma` `lgamma_r` `tgamma` | one algorithm; see below | *same code* |
+| **Bessel** | `j0` `j1` `y0` `y1` `jn` `yn` | reference schedule | *same code* |
 
-**Not yet ported**: the trigonometric family (`sin` `cos` `tan` `sincos`), the
-inverse trigonometric family (`asin` `acos` `atan` `atan2`), the hyperbolics
-(`sinh` `cosh` `tanh` `asinh` `acosh` `atanh`), `erf` / `erfc`, the gamma
-functions (`lgamma` `lgamma_r` `tgamma`), the Bessel family (`j0` `j1` `y0`
-`y1` `jn` `yn`), and the single-precision transcendentals. Their tables are
-already here; what is missing is the kernels. See *Adding a function*.
-
-The trigonometric family carries one extra obligation the others do not:
-`rmath` leaves `|x| >= 105414350` to the platform's `__branred` (a Payne-Hanek
-reduction) rather than porting it, which a GPU kernel cannot do — there is no
-platform to fall back to. Porting `sin` here therefore means porting
-`__branred` too.
-
-Three functions accept `Fast` and ignore it, and the reason is worth stating
-rather than hiding: `pow` multiplies its logarithm by `y`, so a table-free
+Several families accept `Fast` and ignore it, and the reason is worth stating
+rather than hiding. `pow` multiplies its logarithm by `y`, so a table-free
 logarithm accurate to a fifth of an ulp still leaves `x^y` around 200 ulp out
-at `|y| = 360` — measured, not assumed. Reaching the accuracy `pow` needs means
+at `|y| = 360` — measured, not assumed; reaching the accuracy `pow` needs means
 the double-double table logarithm, and once you have paid for that there is
 nothing left for an approximation to save. `cbrt` and `hypot` are already their
-own cheap algorithms.
+own cheap algorithms. The trigonometric families *are* table lookups and short
+polynomials, and the reduction — which is the cost, and the part no
+approximation can skip without changing which quadrant the answer is in — would
+still have to run. `erf` and `erfc` are correctly rounded, which is the whole
+point of them.
+
+`lgamma` and `tgamma` are the one family that makes no bit-exactness claim, and
+say so: Rust has no `f64::tgamma` or `f64::lgamma`, so there is no call a caller
+was already making for `BitExact` to be a claim *about*. Both policies run one
+implementation, documented by its measured error. Against `rmath` — which
+reaches the same conclusion for the same reason — `tgamma` comes out
+bit-identical and `lgamma` within 4 ulp away from its two zeros on the negative
+half-line.
+
+### What the port had to add
+
+Three things `rmath` leaves to the platform, because on a CPU there is a
+platform to leave them to, and a kernel has none:
+
+* **`__branred`**, the Payne-Hanek reduction `sin`, `cos` and `tan` need past
+  `105414350`. `rmath` computes the whole vector by the table algorithm and
+  repairs the handful of lanes that landed there by calling the scalar `libm`
+  on them one at a time. Ported here, so the band is a real band rather than a
+  hole. Its data turned up a trap: `branred.h` declares its own `mp2`, distinct
+  from `usncs.h`'s despite the shared name, and using the wrong one leaves the
+  reduction a third of an ulp out — a wrong last bit for roughly one argument in
+  four across that band.
+* **`asinh` and `acosh`'s accurate path.** Both are correctly-rounded
+  CORE-MATH routines with a two-tier structure: a double-double evaluation with
+  a rounding certificate, and below it a second logarithm to 159 bits plus a
+  table of the arguments even that cannot resolve. `rmath` ports the first tier
+  and delegates the one input in `2^17` the certificate cannot settle. Both
+  tiers are here.
+* **`sinf`, `cosf`, `powf`, `atan2f` and the single-precision Bessel family.**
+  `rmath`'s single-precision `BitExact` path calls the platform's own `float`
+  routine lane by lane, which is exact by construction and — because the
+  platform's `float` routines are cheaper than its `double` ones — *faster*
+  than widening. Neither is available on a device, so these are schedule ports.
+
+### The one place `BitExact` is not an unconditional claim
+
+The single-precision functions in `cube_math::single::wide` are computed in double
+precision and rounded once. That reaches the platform's answer because the
+platform computes *those* correctly rounded, and correct rounding is a property
+of the answer rather than of the route. Almost always: double rounding fails
+where the `f64` result lands within its own error of an `f32` boundary, and
+`rmath`'s exhaustive sweep over all `2^32` inputs found three such inputs
+across the whole set — one for `log10f`, two for `sinhf`. Rates around one in
+four billion, quoted rather than assumed, and stated in that module rather than
+buried here.
 
 ## Running on ROCm
 
@@ -217,14 +263,35 @@ it is about to run on either way.
 | `fmod` | — | — | **177** | **1861** |
 
 All bit-exact — these are the `BitExact` policy's numbers, not `Fast`'s. The
-rest of the ported set lands between 765 (`log1p`) and 1959 (`exp2`) Melem/s
-on ROCm.
+rest of the set as it stood then lands between 765 (`log1p`) and 1959 (`exp2`)
+Melem/s on ROCm.
+
+The families added since — trigonometric, inverse trigonometric, hyperbolic,
+error, gamma and Bessel, in both precisions — have **not** been re-measured on
+ROCm. The environment they were written in has the same GPU and not the HIP
+userspace to reach it with — `/opt/rocm` is absent, so `cargo test --features
+hip` cannot link, let alone launch — and a number nobody took is not a number
+to print. On the CubeCL CPU runtime, where
+the whole suite does run and is bit-exact, they land where their shapes
+suggest: the trigonometric family and the inverse hyperbolics around 580-680
+Melem/s alongside `exp`'s 729, `erf` at 568, `lgamma` and `tgamma` around 440,
+and the two genuinely branchy ones — `erfc` at 266 and the Bessel functions
+around 210 — a third of that. `sin` on arguments past `105414350`, where every
+thread runs `double::branred`, costs 186.
+
+Two of those numbers are worth reading as design outcomes rather than
+measurements. `erfc`'s accurate path runs on roughly one input in thirty
+thousand, so a warp pays for it only when one of its threads lands there; the
+266 above is a benchmark whose inputs sweep the whole domain uniformly, which
+is close to the worst case for that. And the Bessel functions' near-a-zero
+repair is exactly the data-dependent branch that stops `rmath` vectorising
+them at all — here it costs the thread that takes it and nothing else.
 
 Two caveats worth stating. `fmod`'s shift-and-subtract loop still runs one
-iteration per binary digit of the quotient — the same work glibc does — so it
-remains the one place where neighbouring threads diverge badly, and the trip
-count is set by the ratio of the arguments rather than by anything the kernel
-controls. And these are *kernel* numbers, on data already on the device: a
+iteration per binary digit of the quotient — the same work glibc does — and its
+trip count is set by the ratio of the arguments rather than by anything the
+kernel controls, so neighbouring threads diverge as badly as their data makes
+them. And these are *kernel* numbers, on data already on the device: a
 single call that uploads and reads back measures 263 Melem/s, and the
 difference is entirely the two transfers. Reach for the GPU when the data is
 already there, or when enough work happens per element to pay for the trip.
@@ -247,7 +314,22 @@ established transitively — over a sweep built to land on the values that break
 these algorithms: every special value, every power of two across the exponent
 range and its two neighbours, a dense walk of the interesting interval, and
 random bit patterns. Two-argument functions get a cross product, because what
-breaks them is the *relationship* between the arguments.
+breaks them is the *relationship* between the arguments; `jn` and `yn` get a
+cross product of *orders* against arguments, because what selects their
+recurrence is `n` against `x` rather than either alone; and `sin`, `cos` and
+`tan` are swept five times over, once per band, because a sweep to `1e300` puts
+almost every input in `branred`'s and leaves the three cheaper reductions all
+but untested.
+
+Two kinds of comparison, and the suite distinguishes them. Almost everything is
+held to the *bits*. `lgamma` is held to a mixed criterion — relative ulp away
+from its zeros, absolute at them — because it reaches those zeros by
+subtracting two quantities near `1.5`, so the last ulp of either is already
+thousands of ulp of the answer and a relative bound there is not a statement
+about accuracy. The `Fast` policies are held to the ulp bound each kernel
+documents, and to the bits on every special value, in both directions: an
+earlier version compared only when the reference was non-finite, and an
+infinity where a subnormal belonged sailed through.
 
 `tests/fma.rs` checks the software multiply-add against the hardware
 instruction on 1.6 million triples, including the cancellation, subnormal and

@@ -1,5 +1,10 @@
 //! `sinh`, `cosh`, `tanh` and `atanh`.
 //!
+//! The other two inverse hyperbolics are not here: `asinh` and `acosh` are
+//! correctly-rounded CORE-MATH routines with a whole accurate tier of their
+//! own, and they get modules to themselves — [`super::asinh`] and
+//! [`super::acosh`].
+//!
 //! These came almost free, and that is the interesting thing about them: the
 //! platform computes all four as compositions on `exp`, `expm1` and `log1p`,
 //! exactly, with no fused-multiply-add subtleties of their own. Once those

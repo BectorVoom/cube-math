@@ -125,6 +125,22 @@ fn bench<R: Runtime>(name: &str) {
     one("expm1", Unary::Expm1, &data(-1.0, 1.0));
     one("log1p", Unary::Log1p, &data(-0.9, 10.0));
     one("cbrt", Unary::Cbrt, &positive);
+    one("sin", Unary::Sin, &data(-100.0, 100.0));
+    one("cos", Unary::Cos, &data(-100.0, 100.0));
+    one("tan", Unary::Tan, &data(-100.0, 100.0));
+    one("sin (branred)", Unary::Sin, &data(1e9, 1e18));
+    one("asin", Unary::Asin, &data(-1.0, 1.0));
+    one("atan", Unary::Atan, &wide);
+    one("sinh", Unary::Sinh, &data(-700.0, 700.0));
+    one("tanh", Unary::Tanh, &data(-20.0, 20.0));
+    one("asinh", Unary::Asinh, &wide);
+    one("acosh", Unary::Acosh, &data(1.0, 1e18));
+    one("erf", Unary::Erf, &data(-6.0, 6.0));
+    one("erfc", Unary::Erfc, &data(-6.0, 27.0));
+    one("lgamma", Unary::LGamma, &data(-50.0, 170.0));
+    one("tgamma", Unary::TGamma, &data(-20.0, 170.0));
+    one("j0", Unary::J0, &data(0.0, 100.0));
+    one("y1", Unary::Y1, &data(0.0, 100.0));
     one("sqrt", Unary::Sqrt, &positive);
     one("rint", Unary::Rint, &wide);
 
@@ -148,6 +164,7 @@ fn bench<R: Runtime>(name: &str) {
     };
     two("pow", Binary::Pow);
     two("hypot", Binary::Hypot);
+    two("atan2", Binary::Atan2);
     two("fmod", Binary::Fmod);
 
     // What a round trip through host memory costs, for contrast. This one
