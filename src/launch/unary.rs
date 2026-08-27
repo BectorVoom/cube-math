@@ -58,6 +58,14 @@ pub enum Unary {
     Erf,
     /// The complementary error function, `1 - erf(x)` without the cancellation.
     Erfc,
+    /// Bessel function of the first kind, order 0.
+    J0,
+    /// Bessel function of the first kind, order 1.
+    J1,
+    /// Bessel function of the second kind, order 0.
+    Y0,
+    /// Bessel function of the second kind, order 1.
+    Y1,
     /// Square root.
     Sqrt,
     /// Absolute value.
@@ -101,6 +109,10 @@ impl Unary {
             Self::Atanh => "atanh",
             Self::Erf => "erf",
             Self::Erfc => "erfc",
+            Self::J0 => "j0",
+            Self::J1 => "j1",
+            Self::Y0 => "y0",
+            Self::Y1 => "y1",
             Self::Sqrt => "sqrt",
             Self::Abs => "abs",
             Self::Floor => "floor",
@@ -185,6 +197,10 @@ fn kernel_f64(input: &Array<f64>, output: &mut Array<f64>, #[comptime] op: Unary
             Unary::Atanh => d::hyper::atanh(x, cfg),
             Unary::Erf => d::erf::erf(x, cfg),
             Unary::Erfc => d::erfc::erfc(x, cfg),
+            Unary::J0 => d::bessel::j0(x, cfg),
+            Unary::J1 => d::bessel::j1(x, cfg),
+            Unary::Y0 => d::bessel::y0(x, cfg),
+            Unary::Y1 => d::bessel::y1(x, cfg),
             Unary::Sqrt => d::exact::sqrt(x, cfg),
             Unary::Abs => d::exact::abs(x, cfg),
             Unary::Floor => d::exact::floor(x, cfg),

@@ -15,6 +15,7 @@
 //! Nothing has to be bound or uploaded to make that work: the tables are
 //! constant arrays compiled into the kernel. See [`crate::tables::consts`].
 
+pub mod bessel;
 pub mod branred;
 pub mod cbrt;
 pub mod dd;

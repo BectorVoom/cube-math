@@ -205,6 +205,67 @@ pub fn erfc_q1_tab() -> Array<u64> {
     Array::<u64>::from_data(comptime!(bits(&d::erfc::Q1)))
 }
 
+/// The Bessel family's small-argument rational fits, as one flat table.
+///
+/// Nine arrays of different lengths, concatenated: `j0`'s numerator and
+/// denominator, `y0`'s, `j1`'s, `y1`'s. See [`crate::double::bessel`] for the
+/// offsets, which are named constants there rather than magic numbers here.
+#[cube]
+pub fn bessel_small_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!({
+        let mut v: Vec<u64> = Vec::new();
+        v.extend(bits(&d::bessel::J0_R));
+        v.extend(bits(&d::bessel::J0_S));
+        v.extend(bits(&d::bessel::Y0_U));
+        v.extend(bits(&d::bessel::Y0_V));
+        v.extend(bits(&d::bessel::J1_R));
+        v.extend(bits(&d::bessel::J1_S));
+        v.extend(bits(&d::bessel::Y1_U));
+        v.extend(bits(&d::bessel::Y1_V));
+        v
+    }))
+}
+
+/// The Bessel family's asymptotic amplitude and phase fits, as one flat table.
+///
+/// Eight tables of four intervals each, every interval padded out to six slots
+/// so that a row is `(table * 4 + interval) * 6 + slot`. The three tables that
+/// only use five slots leave the sixth unread; a uniform stride is what turns
+/// four `if` ladders into one index.
+#[cube]
+pub fn bessel_asympt_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!({
+        let mut v: Vec<u64> = Vec::new();
+        for row in d::bessel::P0R.iter() {
+            v.extend(bits(row));
+        }
+        for row in d::bessel::P0S.iter() {
+            v.extend(bits(row));
+            v.push(0);
+        }
+        for row in d::bessel::Q0R.iter() {
+            v.extend(bits(row));
+        }
+        for row in d::bessel::Q0S.iter() {
+            v.extend(bits(row));
+        }
+        for row in d::bessel::P1R.iter() {
+            v.extend(bits(row));
+        }
+        for row in d::bessel::P1S.iter() {
+            v.extend(bits(row));
+            v.push(0);
+        }
+        for row in d::bessel::Q1R.iter() {
+            v.extend(bits(row));
+        }
+        for row in d::bessel::Q1S.iter() {
+            v.extend(bits(row));
+        }
+        v
+    }))
+}
+
 /// A `f64` constant that survives the trip to a C++ backend.
 ///
 /// See the module documentation: a scalar constant reaches `cubecl-cpp` as an

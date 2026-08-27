@@ -17,6 +17,11 @@ pub enum Binary {
     Hypot,
     /// The angle of `(x, y)` from the positive `x` axis, in radians.
     Atan2,
+    /// Bessel function of the first kind, order `x` — an integer in a float
+    /// lane — evaluated at `y`.
+    Jn,
+    /// Bessel function of the second kind, order `x`, evaluated at `y`.
+    Yn,
     /// The magnitude of `x` with the sign of `y`.
     CopySign,
     /// `x - y` if `x > y`, and `+0` otherwise.
@@ -44,6 +49,8 @@ impl Binary {
             Self::Pow => "pow",
             Self::Hypot => "hypot",
             Self::Atan2 => "atan2",
+            Self::Jn => "jn",
+            Self::Yn => "yn",
             Self::CopySign => "copysign",
             Self::Fdim => "fdim",
             Self::Fmax => "fmax",
@@ -58,7 +65,7 @@ impl Binary {
 
     /// Whether single precision has this one yet.
     pub const fn has_f32(self) -> bool {
-        !matches!(self, Self::Pow | Self::Hypot | Self::Atan2)
+        !matches!(self, Self::Pow | Self::Hypot | Self::Atan2 | Self::Jn | Self::Yn)
     }
 }
 
@@ -87,6 +94,8 @@ fn kernel_f64(a: &Array<f64>, b: &Array<f64>, out: &mut Array<f64>, #[comptime] 
             Binary::Pow => d::pow::pow(x, y, cfg),
             Binary::Hypot => d::hypot::hypot(x, y, cfg),
             Binary::Atan2 => d::invtrig::atan2(x, y, cfg),
+            Binary::Jn => d::bessel::jn(x, y, cfg),
+            Binary::Yn => d::bessel::yn(x, y, cfg),
             Binary::CopySign => d::exact::copysign(x, y),
             Binary::Fdim => d::exact::fdim(x, y, cfg),
             Binary::Fmax => d::exact::fmax(x, y, cfg),

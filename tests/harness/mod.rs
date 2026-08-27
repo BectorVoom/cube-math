@@ -200,6 +200,53 @@ pub fn sweep_f64(limit: f64) -> Vec<f64> {
     v
 }
 
+/// Orders against arguments, for the two Bessel functions that take one.
+///
+/// What decides which recurrence `jn` runs is `n` against `x`, not either
+/// alone — forward from `j0`/`j1` when `n <= x`, backward through a continued
+/// fraction when `n > x`, and the leading Taylor term below `2^-29` — so the
+/// sweep has to be a cross product. Negative orders are included because both
+/// functions fold them through a reflection, and huge arguments because both
+/// switch to a closed form past `2^302`.
+pub fn sweep_order_f64() -> (Vec<f64>, Vec<f64>) {
+    let orders: Vec<f64> = (-40i32..=40)
+        .chain([100, -100, 200, 1000, -1000])
+        .map(|n| n as f64)
+        .collect();
+    let mut args: Vec<f64> = vec![
+        0.0,
+        -0.0,
+        f64::from_bits(1),
+        f64::MIN_POSITIVE,
+        1e-30,
+        1e-9,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        1e300,
+        1e100,
+        f64::MAX,
+    ];
+    for i in 0..600 {
+        args.push(i as f64 * 0.125);
+        args.push(-(i as f64) * 0.125);
+    }
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    for _ in 0..2000 {
+        let u = (rng.next() >> 11) as f64 / (1u64 << 53) as f64;
+        args.push(u * 200.0);
+        args.push(u * 1e12);
+    }
+    let (mut a, mut b) = (Vec::new(), Vec::new());
+    for &n in &orders {
+        for &x in &args {
+            a.push(n);
+            b.push(x);
+        }
+    }
+    (a, b)
+}
+
 /// The single-precision counterpart of [`sweep_f64`].
 pub fn sweep_f32(limit: f32) -> Vec<f32> {
     let mut v: Vec<f32> = Vec::with_capacity(1 << 17);

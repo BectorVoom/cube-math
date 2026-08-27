@@ -18,7 +18,7 @@ use cube_math::prelude::*;
 use cubecl::prelude::*;
 use harness::{
     check, check2, check2_pair, check_pair, check_ulp, eval1, eval1_pair, eval2, eval2_pair,
-    sweep2_f32, sweep2_f64, sweep_f32, sweep_f64,
+    sweep2_f32, sweep2_f64, sweep_f32, sweep_f64, sweep_order_f64,
 };
 use rmath::prelude::*;
 
@@ -117,6 +117,34 @@ fn suite_f64<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
     single_algo!("tan", Unary::Tan, Tan, sweep_f64(1e300));
     single_algo!("erf", Unary::Erf, Erf, sweep_f64(6.0));
     single_algo!("erfc", Unary::Erfc, Erfc, sweep_f64(30.0));
+    single_algo!("j0", Unary::J0, J0, sweep_f64(50.0));
+    single_algo!("j1", Unary::J1, J1, sweep_f64(50.0));
+    single_algo!("y0", Unary::Y0, Y0, sweep_f64(50.0));
+    single_algo!("y1", Unary::Y1, Y1, sweep_f64(50.0));
+
+    if exact {
+        // `jn` and `yn` take the order in the first lane, so the sweep is a
+        // cross product of orders against arguments rather than the
+        // magnitude-driven one the others use: what selects the recurrence is
+        // `n` *against* `x`, and each of the three branches has to be reached.
+        let (na, xb) = sweep_order_f64();
+        check2(
+            backend,
+            "jn",
+            |p, q| eval2(client, Binary::Jn, p, q, F64, cfg_exact),
+            |n, x| rmath::Jn::new().eval(n, x),
+            &na,
+            &xb,
+        );
+        check2(
+            backend,
+            "yn",
+            |p, q| eval2(client, Binary::Yn, p, q, F64, cfg_exact),
+            |n, x| rmath::Yn::new().eval(n, x),
+            &na,
+            &xb,
+        );
+    }
 
     if exact {
         // The trigonometric sweep on the band each reduction owns, not just on
