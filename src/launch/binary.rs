@@ -124,11 +124,11 @@ fn kernel_f32(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>, #[comptime] 
             Binary::Fmod => s::exact::fmod(x, y, cfg),
             Binary::Remainder => s::exact::remainder(x, y, cfg),
             Binary::NextAfter => s::exact::nextafter(x, y, cfg),
-            Binary::Pow => s::wide::pow(x, y, cfg),
+            Binary::Pow => s::pow::pow(x, y, cfg),
             Binary::Hypot => s::wide::hypot(x, y, cfg),
-            Binary::Atan2 => s::wide::atan2(x, y, cfg),
-            Binary::Jn => s::wide::jn(x, y, cfg),
-            Binary::Yn => s::wide::yn(x, y, cfg),
+            Binary::Atan2 => s::atan2::atan2(x, y, cfg),
+            Binary::Jn => s::bessel::jn(x, y, cfg),
+            Binary::Yn => s::bessel::yn(x, y, cfg),
         };
     }
 }

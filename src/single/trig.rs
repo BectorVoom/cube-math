@@ -27,6 +27,7 @@ use cubecl::prelude::*;
 
 use crate::bits::opaque32;
 use crate::config::MathConfig;
+use crate::tables::single::bessel as bt;
 use crate::tables::single::trig as t;
 
 /// The top 12 bits of a `f32`, sign cleared.
@@ -74,7 +75,7 @@ pub fn reduce_fast(x: f64) -> (f64, u32) {
 /// than the 24 the answer needs.
 #[cube]
 pub fn reduce_large(xi0: u32) -> (f64, u32) {
-    let tab = Array::<u32>::from_data(comptime!(t::INV_PIO4.to_vec()));
+    let tab = Array::<u32>::from_data(comptime!(bt::INV_PIO4.to_vec()));
     let base = usize::cast_from((xi0 >> 26u32) & 15u32);
     let shift = (xi0 >> 23u32) & 7u32;
 

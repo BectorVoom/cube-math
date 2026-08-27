@@ -247,6 +247,42 @@ pub fn sweep_order_f64() -> (Vec<f64>, Vec<f64>) {
     (a, b)
 }
 
+/// The single-precision counterpart of [`sweep_order_f64`].
+pub fn sweep_order_f32() -> (Vec<f32>, Vec<f32>) {
+    let orders: Vec<f32> = (-40i32..=40).chain([100, -100, 200]).map(|n| n as f32).collect();
+    let mut args: Vec<f32> = vec![
+        0.0,
+        -0.0,
+        f32::from_bits(1),
+        f32::MIN_POSITIVE,
+        1e-30,
+        1e-9,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        1e30,
+        f32::MAX,
+    ];
+    for i in 0..400 {
+        args.push(i as f32 * 0.125);
+        args.push(-(i as f32) * 0.125);
+    }
+    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+    for _ in 0..1200 {
+        let u = (rng.next() >> 40) as f32 / (1u32 << 24) as f32;
+        args.push(u * 200.0);
+        args.push(u * 1e6);
+    }
+    let (mut a, mut b) = (Vec::new(), Vec::new());
+    for &n in &orders {
+        for &x in &args {
+            a.push(n);
+            b.push(x);
+        }
+    }
+    (a, b)
+}
+
 /// The single-precision counterpart of [`sweep_f64`].
 pub fn sweep_f32(limit: f32) -> Vec<f32> {
     let mut v: Vec<f32> = Vec::with_capacity(1 << 17);

@@ -18,7 +18,7 @@ use cube_math::prelude::*;
 use cubecl::prelude::*;
 use harness::{
     check, check2, check2_pair, check_mixed, check_pair, check_ulp, eval1, eval1_pair, eval2, eval2_pair,
-    sweep2_f32, sweep2_f64, sweep_f32, sweep_f64, sweep_order_f64,
+    sweep2_f32, sweep2_f64, sweep_f32, sweep_f64, sweep_order_f32, sweep_order_f64,
 };
 use rmath::prelude::*;
 
@@ -387,26 +387,24 @@ fn suite_f32<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
     ported32!("ln", Unary::Ln, Ln, sweep_f32(1e30));
     ported32!("log2", Unary::Log2, Log2, sweep_f32(1e30));
 
-    // The widened set. These are correctly rounded rather than schedule
-    // ports — see `cube_math::single::wide` — so they are checked against the
-    // platform's own `f32` routine, which `rmath` delegates to. Three inputs
-    // in 2^32 across the whole set are known to differ; a sampled sweep is
-    // not expected to land on them, and if it ever does, that module's
-    // documentation is where the number to update lives.
+    // Everything else. Some of these are schedule ports of their own
+    // (`sinf`, `cosf`, `powf`, `atan2f`, the Bessel family); the rest are
+    // computed in double precision and rounded once, which reaches the
+    // platform's answer because the platform computes *those* correctly
+    // rounded. Either way the sweep holds them to the bits — see
+    // `cube_math::single::wide` for the three inputs in 2^32 across the whole
+    // widened set that are known to differ, and why a sampled sweep is not
+    // expected to land on them.
     macro_rules! wide32 {
-        ($name:literal, $op:expr, $rm:ident, $sweep:expr) => {{
-            let sw = $sweep;
-            let got = eval1(client, $op, &sw, F32, cfg);
-            let mut n = 0usize;
-            for i in 0..sw.len() {
-                let w = rmath::$rm::new().eval(sw[i]);
-                let g = got[i];
-                if g.to_bits() != w.to_bits() && !(g.is_nan() && w.is_nan()) {
-                    n += 1;
-                }
-            }
-            eprintln!("[diag] {} f32: {n} of {} differ", $name, sw.len());
-        }};
+        ($name:literal, $op:expr, $rm:ident, $sweep:expr) => {
+            check(
+                backend,
+                concat!($name, " f32"),
+                |v| eval1(client, $op, v, F32, cfg),
+                |x| rmath::$rm::new().eval(x),
+                &$sweep,
+            );
+        };
     }
     wide32!("log10", Unary::Log10, Log10, sweep_f32(1e30));
     wide32!("log1p", Unary::Log1p, Log1p, sweep_f32(1e30));
@@ -431,27 +429,61 @@ fn suite_f32<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
 
     let (wa, wb) = sweep2_f32();
     macro_rules! wide32_2 {
-        ($name:literal, $op:expr, $rm:ident) => {{
-            let got = eval2(client, $op, &wa, &wb, F32, cfg);
-            let mut n = 0usize;
-            let mut shown = 0;
-            for i in 0..wa.len() {
-                let w = rmath::$rm::new().eval(wa[i], wb[i]);
-                let g = got[i];
-                if g.to_bits() != w.to_bits() && !(g.is_nan() && w.is_nan()) {
-                    n += 1;
-                    if shown < 5 {
-                        shown += 1;
-                        eprintln!("    x={:08x} y={:08x} got {:08x} want {:08x}", wa[i].to_bits(), wb[i].to_bits(), g.to_bits(), w.to_bits());
-                    }
-                }
-            }
-            eprintln!("[diag] {} f32: {n} of {} differ", $name, wa.len());
-        }};
+        ($name:literal, $op:expr, $rm:ident) => {
+            check2(
+                backend,
+                concat!($name, " f32"),
+                |p, q| eval2(client, $op, p, q, F32, cfg),
+                |x, y| rmath::$rm::new().eval(x, y),
+                &wa,
+                &wb,
+            );
+        };
     }
     wide32_2!("pow", Binary::Pow, Pow);
     wide32_2!("hypot", Binary::Hypot, Hypot);
     wide32_2!("atan2", Binary::Atan2, Atan2);
+
+    // `jnf` and `ynf`, on the same order-against-argument cross product the
+    // double-precision pair get.
+    let (na, xb) = sweep_order_f32();
+    check2(
+        backend,
+        "jn f32",
+        |p, q| eval2(client, Binary::Jn, p, q, F32, cfg),
+        |n, x| rmath::Jn::new().eval(n, x),
+        &na,
+        &xb,
+    );
+    check2(
+        backend,
+        "yn f32",
+        |p, q| eval2(client, Binary::Yn, p, q, F32, cfg),
+        |n, x| rmath::Yn::new().eval(n, x),
+        &na,
+        &xb,
+    );
+
+    check_pair(
+        backend,
+        "sincos f32",
+        |v| eval1_pair(client, UnaryPair::SinCos, v, F32, cfg),
+        |x| rmath::SinCos::new().eval(x),
+        &sweep_f32(1e6),
+    );
+    {
+        let xs = sweep_f32(200.0);
+        let (_, signs) = eval1_pair(client, UnaryPair::LGammaR, &xs, F32, cfg);
+        check(
+            backend,
+            "lgamma_r sign f32",
+            |_| signs.clone(),
+            |x| rmath::LGammaR::new().eval(x).1,
+            &xs,
+        );
+    }
+    wide32!("lgamma", Unary::LGamma, LGamma, sweep_f32(200.0));
+    wide32!("tgamma", Unary::TGamma, TGamma, sweep_f32(35.0));
 }
 
 /// Run everything on one runtime.

@@ -7,6 +7,11 @@
 //! which is exact by construction and cheaper than anything it could compile.
 //! A kernel has no `sinf` to call, so the data had to come from somewhere.
 //!
+//! The `4/pi` table the large reduction needs is *not* here: the generated
+//! [`super::bessel`] already carries it, because glibc's `j0f` family reduces
+//! the same way and `rmath` did port those.
+//!
+//!
 //! Transcribed from glibc's `sysdeps/ieee754/flt-32/s_sincosf_data.c` and
 //! `s_sincosf.h`. Copyright (C) 2018-2026 Free Software Foundation, Inc.,
 //! SPDX-License-Identifier: `LGPL-2.1-or-later`. Values are exact bit
@@ -65,18 +70,3 @@ pub const PI63: f64 = f64::from_bits(0x3c1921fb54442d18);
 
 /// `pi/4`, the small-argument cutoff. Upstream: `0x1.921FB6p-1f`.
 pub const PIO4: f32 = f32::from_bits(0x3f490fdb);
-
-/// `4/pi` to 192 bits, as 24 overlapping 32-bit windows.
-///
-/// Upstream stores 8 new bits per entry rather than 32, which makes the table
-/// four times larger and every access aligned — the reduction reads `arr[0]`,
-/// `arr[4]` and `arr[8]` from a base chosen by the argument's exponent, and
-/// the overlap is what lets that base move in single-byte steps.
-pub const INV_PIO4: [u32; 24] = [
-    0xa2, 0xa2f9, 0xa2f983, 0xa2f9836e, //
-    0xf9836e4e, 0x836e4e44, 0x6e4e4415, 0x4e441529, //
-    0x441529fc, 0x1529fc27, 0x29fc2757, 0xfc2757d1, //
-    0x2757d1f5, 0x57d1f534, 0xd1f534dd, 0xf534ddc0, //
-    0x34ddc0db, 0xddc0db62, 0xc0db6295, 0xdb629599, //
-    0x6295993c, 0x95993c43, 0x993c4390, 0x3c439041,
-];

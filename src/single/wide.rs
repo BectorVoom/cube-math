@@ -112,25 +112,9 @@ widen1! { /// `ln|Gamma(x)|`.
 lgamma => d::gamma::lgamma }
 widen1! { /// The Gamma function.
 tgamma => d::gamma::tgamma }
-widen1! { /// Bessel function of the first kind, order 0.
-j0 => d::bessel::j0 }
-widen1! { /// Bessel function of the first kind, order 1.
-j1 => d::bessel::j1 }
-widen1! { /// Bessel function of the second kind, order 0.
-y0 => d::bessel::y0 }
-widen1! { /// Bessel function of the second kind, order 1.
-y1 => d::bessel::y1 }
 
-widen2! { /// `x^y`.
-pow => d::pow::pow }
 widen2! { /// `sqrt(x^2 + y^2)`, without the intermediate overflow.
 hypot => d::hypot::hypot }
-widen2! { /// The angle of `(x, y)` from the positive `x` axis, in radians.
-atan2 => d::invtrig::atan2 }
-widen2! { /// Bessel function of the first kind, order `n`.
-jn => d::bessel::jn }
-widen2! { /// Bessel function of the second kind, order `n`.
-yn => d::bessel::yn }
 
 /// Inverse hyperbolic tangent.
 ///

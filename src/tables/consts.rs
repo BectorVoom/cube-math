@@ -71,6 +71,12 @@ pub fn log2f_tab() -> Array<u64> {
     Array::<u64>::from_data(comptime!(bits(&s::log2::TAB)))
 }
 
+/// `powf`: `[1/c, log2 c]` for 16 subintervals, already bit patterns.
+#[cube]
+pub fn powf_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!(s::pow::TAB.to_vec()))
+}
+
 /// `atan` / `atan2`: `[x0, t1, c2, c3, c4, c5, c6]` for 241 subintervals,
 /// indexed by `round(256 w) - 16` where `w` is the argument or its reciprocal.
 #[cube]
@@ -295,6 +301,88 @@ pub fn bessel_asympt_tab() -> Array<u64> {
     }))
 }
 
+/// The single-precision Bessel family's small-argument rational fits.
+///
+/// Eight arrays of different lengths, concatenated. See
+/// [`crate::single::bessel`] for the offsets.
+#[cube]
+pub fn besself_small_tab() -> Array<u32> {
+    Array::<u32>::from_data(comptime!({
+        let mut v: Vec<u32> = Vec::new();
+        v.extend(bits32(&s::bessel::J0_R));
+        v.extend(bits32(&s::bessel::J0_S));
+        v.extend(bits32(&s::bessel::Y0_U));
+        v.extend(bits32(&s::bessel::Y0_V));
+        v.extend(bits32(&s::bessel::J1_R));
+        v.extend(bits32(&s::bessel::J1_S));
+        v.extend(bits32(&s::bessel::Y1_U));
+        v.extend(bits32(&s::bessel::Y1_V));
+        v
+    }))
+}
+
+/// The single-precision Bessel family's asymptotic amplitude and phase fits.
+///
+/// Laid out exactly as [`bessel_asympt_tab()`]: eight tables of four intervals
+/// each, every interval padded to six slots so that a row is
+/// `(table * 4 + interval) * 6 + slot`.
+#[cube]
+pub fn besself_asympt_tab() -> Array<u32> {
+    Array::<u32>::from_data(comptime!({
+        let mut v: Vec<u32> = Vec::new();
+        for row in s::bessel::P0R.iter() {
+            v.extend(bits32(row));
+        }
+        for row in s::bessel::P0S.iter() {
+            v.extend(bits32(row));
+            v.push(0);
+        }
+        for row in s::bessel::Q0R.iter() {
+            v.extend(bits32(row));
+        }
+        for row in s::bessel::Q0S.iter() {
+            v.extend(bits32(row));
+        }
+        for row in s::bessel::P1R.iter() {
+            v.extend(bits32(row));
+        }
+        for row in s::bessel::P1S.iter() {
+            v.extend(bits32(row));
+            v.push(0);
+        }
+        for row in s::bessel::Q1R.iter() {
+            v.extend(bits32(row));
+        }
+        for row in s::bessel::Q1S.iter() {
+            v.extend(bits32(row));
+        }
+        v
+    }))
+}
+
+/// The near-a-zero repair polynomials: four families of 64 rows of 7.
+///
+/// A row is `[lo, centre, hi, c0, c1, c2, c3]` — the interval the fit is valid
+/// on, the zero it is centred at, and a cubic in `x - centre`. Row `r` of
+/// family `f` is at `(f * 64 + r) * 7`.
+#[cube]
+pub fn besself_zeros_tab() -> Array<u32> {
+    Array::<u32>::from_data(comptime!({
+        let mut v: Vec<u32> = Vec::new();
+        for fam in [
+            &s::bessel::J0_ZEROS,
+            &s::bessel::Y0_ZEROS,
+            &s::bessel::J1_ZEROS,
+            &s::bessel::Y1_ZEROS,
+        ] {
+            for row in fam.iter() {
+                v.extend(bits32(row));
+            }
+        }
+        v
+    }))
+}
+
 /// A `f64` constant that survives the trip to a C++ backend.
 ///
 /// See the module documentation: a scalar constant reaches `cubecl-cpp` as an
@@ -317,6 +405,11 @@ pub fn f32_const(#[comptime] bits: u32) -> f32 {
 
 /// The bit patterns of a `f64` table, for [`Array::from_data`].
 fn bits(xs: &[f64]) -> Vec<u64> {
+    xs.iter().map(|x| x.to_bits()).collect()
+}
+
+/// The bit patterns of a `f32` table.
+fn bits32(xs: &[f32]) -> Vec<u32> {
     xs.iter().map(|x| x.to_bits()).collect()
 }
 
