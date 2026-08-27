@@ -67,6 +67,8 @@ pub const EXC_ROWS: u32 = 5;
 const P106: f64 = f64::from_bits(0x4690000000000000);
 /// `2^-106`. See [`P106`].
 const M106: f64 = f64::from_bits(0x3950000000000000);
+/// Half an ulp of one, which steps `1` down to its neighbour below.
+const HALF_ULP1: f64 = f64::from_bits(0x3c90000000000000);
 
 // ---------------------------------------------------------------------------
 // The double-double Horner steps
@@ -341,7 +343,7 @@ pub fn erf(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
         } else {
             // Just short of one: the correctly-rounded value is the neighbour
             // below `1`, reached by subtracting half an ulp of it.
-            out = os - f64::from_bits(0x3c90000000000000) * os;
+            out = os - HALF_ULP1 * os;
         }
     } else if z < ERF_TINY {
         // Written so that `x = -0` comes back as `-0` rather than `+0`.

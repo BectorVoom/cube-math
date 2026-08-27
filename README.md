@@ -156,7 +156,8 @@ buried here.
 ## Running on ROCm
 
 ```text
-export ROCM_PATH=/opt/rocm HIP_PATH=/opt/rocm
+export ROCM_PATH=/opt/rocm HIP_PATH=/opt/rocm   # wherever yours lives
+export LD_LIBRARY_PATH="$ROCM_PATH/lib:$LD_LIBRARY_PATH"
 export HIPRTC_COMPILE_OPTIONS_APPEND=-ffp-contract=off
 cargo test --release --features "cpu,hip"
 ```
@@ -172,6 +173,24 @@ is a ROCm feature, not something this crate invents.
 
 You do not have to remember: `fidelity()` measures it, and reports `CONTRACTS`
 and `bit_exact_capable() == false` when it is missing.
+
+### The kernel cache is not optional either
+
+This crate compiles one kernel per function, per policy, per multiply-add kind,
+per precision. The equivalence suite alone asks for over a hundred, and hipRTC
+is slow enough that compiling them dominates the run. CubeCL can persist the
+compiled binaries and does not by default; the `cubecl.toml` in the repository
+root turns it on:
+
+```toml
+[compilation]
+cache = "target"
+```
+
+That takes the suite's ROCm run from **25.1 s to 2.5 s**, and changes nothing
+about the arithmetic — the cache is keyed on the kernel's `KernelId`, which is
+exactly what the comptime policy and multiply-add already vary, and which is
+why two policies were never able to share a cache entry in the first place.
 
 ## Bit-exactness on a device
 
@@ -242,6 +261,15 @@ compile error inside a generated kernel rather than anything your source shows:
 * `!=` on floats is **ordered** on the CPU runtime and **unordered** on HIP, so
   `x != x` is not a NaN test. Every NaN test here reads the bits.
 
+The first of those has a corollary that cost this crate two rounds of `hipRTC`
+diagnostics: `f64::from_bits(0x…)` written *inside* a `#[cube]` body is a
+reinterpretation of a literal, and a literal is an rvalue. It compiles on the
+CPU runtime, which lowers through MLIR and never asks the question, and fails
+on every C++ backend with an error pointing at generated source the author has
+never seen. Every bit pattern in this crate is therefore a module-level
+`const`, evaluated on the host, and none is spelled at a call site — including
+the ones that only appear once.
+
 ## Speed
 
 `RUSTFLAGS="-C target-cpu=native" cargo run --release --features "cpu,hip" --example bench`,
@@ -266,26 +294,55 @@ All bit-exact — these are the `BitExact` policy's numbers, not `Fast`'s. The
 rest of the set as it stood then lands between 765 (`log1p`) and 1959 (`exp2`)
 Melem/s on ROCm.
 
-The families added since — trigonometric, inverse trigonometric, hyperbolic,
-error, gamma and Bessel, in both precisions — have **not** been re-measured on
-ROCm. The environment they were written in has the same GPU and not the HIP
-userspace to reach it with — `/opt/rocm` is absent, so `cargo test --features
-hip` cannot link, let alone launch — and a number nobody took is not a number
-to print. On the CubeCL CPU runtime, where
-the whole suite does run and is bit-exact, they land where their shapes
-suggest: the trigonometric family and the inverse hyperbolics around 580-680
-Melem/s alongside `exp`'s 729, `erf` at 568, `lgamma` and `tgamma` around 440,
-and the two genuinely branchy ones — `erfc` at 266 and the Bessel functions
-around 210 — a third of that. `sin` on arguments past `105414350`, where every
-thread runs `double::branred`, costs 186.
+The families added since, measured the same way — best of six runs, same
+machine, same `-ffp-contract=off`:
 
-Two of those numbers are worth reading as design outcomes rather than
-measurements. `erfc`'s accurate path runs on roughly one input in thirty
-thousand, so a warp pays for it only when one of its threads lands there; the
-266 above is a benchmark whose inputs sweep the whole domain uniformly, which
-is close to the worst case for that. And the Bessel functions' near-a-zero
-repair is exactly the data-dependent branch that stops `rmath` vectorising
-them at all — here it costs the thread that takes it and nothing else.
+| Melem/s | ROCm | | Melem/s | ROCm |
+|---|---|---|---|---|
+| `sin` | 1058 | | `erf` | 590 |
+| `cos` | 1108 | | `erfc` | 237 |
+| `tan` | 902 | | `lgamma` | 428 |
+| `sin`, past `105414350` | 187 | | `tgamma` | 352 |
+| `asin` | 1484 | | `j0` | 126 |
+| `atan` | 1151 | | `y1` | 134 |
+| `atan2` | 544 | | `pow` | 666 |
+| `sinh` | 2070 | | `hypot` | 707 |
+| `tanh` | 568 | | `asinh` | 326 |
+| `acosh` | 877 | | | |
+
+Two of those are worth reading as design outcomes rather than measurements.
+`erfc`'s accurate path runs on roughly one input in thirty thousand, and a warp
+pays for it only when one of its threads lands there — the benchmark sweeps the
+whole domain uniformly, which is close to the worst case. And the Bessel
+functions' near-a-zero repair is exactly the data-dependent branch that stops
+`rmath` vectorising them at all; here it costs the thread that takes it and
+nothing else.
+
+### Why "best of six" and not "the number"
+
+Because on this device the two words are not interchangeable, and the spread
+says something. Over six runs of the same binary on the same data:
+
+| | best | worst | spread |
+|---|---|---|---|
+| `rint` | 4646 | 1108 | 4.2x |
+| `fmod` | 2152 | 440 | 4.9x |
+| `sqrt` | 1889 | 478 | 4.0x |
+| `cos` | 1108 | 269 | 4.1x |
+| `j0` | 126 | 117 | **1.1x** |
+| `y1` | 134 | 110 | **1.2x** |
+| `erfc` | 237 | 193 | **1.2x** |
+| `asinh` | 326 | 276 | **1.2x** |
+| `sin`, past `105414350` | 187 | 171 | **1.1x** |
+
+The functions that swing by four and five times are the *cheap* ones. A kernel
+that does eight operations per element is bound by the two memory transactions
+either side of them, and on an integrated GPU sharing a power budget with the
+cores next to it, what that measures is the thermal state. The functions that
+reproduce to within a tenth are the expensive ones — `j0`, `erfc`, `asinh`,
+`branred` — which are compute-bound and therefore actually measurable. So the
+slow rows in the table above are the trustworthy ones, and the fast rows are an
+upper bound that a busy machine will not reach.
 
 Two caveats worth stating. `fmod`'s shift-and-subtract loop still runs one
 iteration per binary digit of the quotient — the same work glibc does — and its
@@ -334,6 +391,10 @@ infinity where a subnormal belonged sailed through.
 `tests/fma.rs` checks the software multiply-add against the hardware
 instruction on 1.6 million triples, including the cancellation, subnormal and
 tie cases that separate a correct emulation from a plausible one.
+
+Both suites pass in full on the CubeCL CPU runtime and on ROCm (7.1.1,
+gfx1151), which are the two backends that report `bit_exact_capable()`. `wgpu`
+reports `f64` unusable and skips itself, as it should — see below.
 
 Everything runs on a real runtime rather than by calling the kernels as
 ordinary Rust functions — a `#[cube]` function is not callable that way, and

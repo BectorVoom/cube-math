@@ -47,6 +47,13 @@ const DB: u32 = SMALL + 14;
 /// Rows in the hard-case table.
 const DB_ROWS: u32 = 35;
 
+/// `2^-60`. The multiply by it is what raises underflow where the
+/// platform does; nothing here observes the flag.
+const TWO_M60: f64 = f64::from_bits(0x3c30000000000000);
+
+/// `0x1.79p-53`, the near-zero band's relative error bound.
+const EPS_ZERO: f64 = f64::from_bits(0x3ca7900000000000);
+
 /// One `f64` out of a `u64` table.
 #[cube]
 pub fn at(tab: &Array<u64>, i: u32) -> f64 {
@@ -165,7 +172,7 @@ pub fn asinh(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
             // `|x| < 0x1.7137449123ef7p-26`, where `asinh(x)` rounds to `x`.
             // The multiply is what raises underflow when it should; nothing
             // here observes the flag.
-            out = fma64(f64::from_bits(0x3c30000000000000), -x, x, fk);
+            out = fma64(TWO_M60, -x, x, fk);
             if u == 0u64 {
                 out = x;
             }
@@ -196,7 +203,7 @@ pub fn asinh(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
                 sl = x3h * (at(&tab, b) + x2h * at(&tab, b + 1u32));
             }
 
-            let eps = f64::from_bits(0x3ca7900000000000) * x3h;
+            let eps = EPS_ZERO * x3h;
             let lb = x + (sl - eps);
             let ub = x + (sl + eps);
             out = lb;

@@ -30,6 +30,12 @@ use crate::tables::consts::expf_tab;
 use crate::tables::single::exp as t;
 use crate::tables::single::exp10 as x10;
 
+/// `log(2^128)`, above which `expf` overflows.
+const EXP_OFLOW: f32 = f32::from_bits(0x42b17217);
+
+/// `-log(2^-150)`, below whose negation `expf` underflows to zero.
+const EXP_UFLOW: f32 = f32::from_bits(0x42cff1b4);
+
 /// The sign and exponent bits, as ARM's `top12`.
 #[cube]
 pub fn top12(x: f32) -> u32 {
@@ -82,9 +88,9 @@ pub fn exp(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
             out = 0.0;
         } else if abstop >= 0x7f8u32 {
             out = x + x; // `+inf`, or a NaN propagating its payload
-        } else if x > f32::from_bits(0x42b17217) {
+        } else if x > EXP_OFLOW {
             out = inf32(); // `x > log(2^128)`
-        } else if x < -f32::from_bits(0x42cff1b4) {
+        } else if x < -EXP_UFLOW {
             out = 0.0; // `x < log(2^-150)`
         }
         // Large but representable: the main path's answer stands.

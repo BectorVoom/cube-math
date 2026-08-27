@@ -30,6 +30,11 @@ use crate::single::exact::copysign;
 use crate::fma::{FmaKind, fma64};
 use crate::tables::single::atan2 as t;
 
+/// `2^-60`. `th + th * 2^-60 == th - th * 2^-60` holds exactly when `th` is a
+/// power of two, which is where the neighbouring `f32` spacings differ and the
+/// correction has to be scaled to the side it falls on.
+const TWO_M60: f64 = f64::from_bits(0x3c30000000000000);
+
 /// One `f64` out of a `u64` constant table.
 #[cube]
 pub fn at(tab: &Array<u64>, i: u32) -> f64 {
@@ -223,8 +228,8 @@ pub fn atan2(y0: f32, x0: f32, #[comptime] cfg: MathConfig) -> f32 {
                 let th = f64::cast_from(rf);
                 let dh = sh - th;
                 let mut tm = dh + sl;
-                if th + th * f64::from_bits(0x3c30000000000000)
-                    == th - th * f64::from_bits(0x3c30000000000000)
+                if th + th * TWO_M60
+                    == th - th * TWO_M60
                 {
                     // `th` is a power of two, where the neighbouring `f32`
                     // spacings differ and the correction has to be scaled to

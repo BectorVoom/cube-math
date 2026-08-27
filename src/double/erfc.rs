@@ -98,6 +98,40 @@ const EXC_ACC_ROWS: u32 = 17;
 /// Rows in the accurate path's positive-argument hard-case table.
 const EXC_ACC2_ROWS: u32 = 29;
 
+/// Which Chebyshev fit of `erfc(x) exp(x^2) x` covers a given `1/x`: the
+/// ascending edges of the fast path's six bands.
+///
+/// Spelled as six constants rather than an array because they are compared
+/// against, never indexed — and because a `f64::from_bits` written inside a
+/// `#[cube]` body reaches the C++ backends as a reinterpretation of a
+/// *literal*, which is a reinterpretation of an rvalue and does not compile.
+/// See [`crate::bits`].
+const TH0: f64 = f64::from_bits(0x3fbd500000000000);
+const TH1: f64 = f64::from_bits(0x3fc59da6ca291ba6);
+const TH2: f64 = f64::from_bits(0x3fcbc00000000000);
+const TH3: f64 = f64::from_bits(0x3fd0c00000000000);
+const TH4: f64 = f64::from_bits(0x3fd3800000000000);
+const TH5: f64 = f64::from_bits(0x3fd6300000000000);
+
+/// The same, for the accurate path's ten bands. See [`TH0`].
+const THA0: f64 = f64::from_bits(0x3fb4500000000000);
+const THA1: f64 = f64::from_bits(0x3fbe000000000000);
+const THA2: f64 = f64::from_bits(0x3fc3f00000000000);
+const THA3: f64 = f64::from_bits(0x3fc9500000000000);
+const THA4: f64 = f64::from_bits(0x3fcf500000000000);
+const THA5: f64 = f64::from_bits(0x3fd3100000000000);
+const THA6: f64 = f64::from_bits(0x3fd7100000000000);
+const THA7: f64 = f64::from_bits(0x3fdbc00000000000);
+const THA8: f64 = f64::from_bits(0x3fe0b00000000000);
+const THA9: f64 = f64::from_bits(0x3fe3000000000000);
+
+/// The one argument whose `erfc` is both subnormal and a hard case.
+const SUBNORMAL_EXCEPTION: f64 = f64::from_bits(0x000667bd620fd95b);
+
+/// The smallest positive subnormal, which `erfc` returns scaled below
+/// `2^-1075` and which the exception above is built from.
+const MIN_SUB: f64 = f64::from_bits(1);
+
 /// `x` rounded to the nearest integer, ties to even.
 ///
 /// The add-and-subtract trick rather than a `round` intrinsic, for the reason
@@ -276,12 +310,12 @@ pub fn asym_step(zh: f64, zl: f64, uh: f64, ul: f64, c: f64, #[comptime] fk: Fma
 #[cube]
 pub fn asympt_row(yh: f64) -> u32 {
     let mut i = 0u32;
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fbd500000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fc59da6ca291ba6));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fcbc00000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fd0c00000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fd3800000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fd6300000000000));
+    i = i + u32::cast_from(yh > TH0);
+    i = i + u32::cast_from(yh > TH1);
+    i = i + u32::cast_from(yh > TH2);
+    i = i + u32::cast_from(yh > TH3);
+    i = i + u32::cast_from(yh > TH4);
+    i = i + u32::cast_from(yh > TH5);
     i
 }
 
@@ -386,16 +420,16 @@ pub fn erfc_fast(x: f64, #[comptime] fk: FmaKind) -> (f64, f64, f64) {
 #[cube]
 pub fn asympt_acc_row(yh: f64) -> u32 {
     let mut i = 0u32;
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fb4500000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fbe000000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fc3f00000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fc9500000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fcf500000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fd3100000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fd7100000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fdbc00000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fe0b00000000000));
-    i = i + u32::cast_from(yh > f64::from_bits(0x3fe3000000000000));
+    i = i + u32::cast_from(yh > THA0);
+    i = i + u32::cast_from(yh > THA1);
+    i = i + u32::cast_from(yh > THA2);
+    i = i + u32::cast_from(yh > THA3);
+    i = i + u32::cast_from(yh > THA4);
+    i = i + u32::cast_from(yh > THA5);
+    i = i + u32::cast_from(yh > THA6);
+    i = i + u32::cast_from(yh > THA7);
+    i = i + u32::cast_from(yh > THA8);
+    i = i + u32::cast_from(yh > THA9);
     i
 }
 
@@ -497,7 +531,7 @@ pub fn erfc_asympt_accurate(x: f64, #[comptime] cfg: MathConfig) -> f64 {
 
     // The one argument whose result is both subnormal and a hard case.
     if u64::reinterpret(x) == 0x403a8f7bfbd15495u64 {
-        res = fma64(f64::from_bits(1), -0.25, f64::from_bits(0x000667bd620fd95b), fk);
+        res = fma64(MIN_SUB, -0.25, SUBNORMAL_EXCEPTION, fk);
     }
     // The general hard cases, as a trailing overwrite. See
     // [`super::erf::erf_accurate_tiny()`] on why this is not an early exit.
@@ -575,7 +609,7 @@ pub fn erfc(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
     } else if at >= POS_LIMIT {
         // Below `2^-1075`: zero, or the smallest subnormal under a directed
         // rounding mode.
-        out = f64::from_bits(1) * 0.25;
+        out = MIN_SUB * 0.25;
         done = true;
     } else if x <= UNIT_LIMIT {
         out = fma64(-x, HALF_ULP1, 1.0, fk);

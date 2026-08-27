@@ -46,6 +46,12 @@ const DB: u32 = ASYMPT + 9;
 /// Rows in the hard-case table.
 const DB_ROWS: u32 = 10;
 
+/// `0x1.fcp-51`, the near-one band's relative error bound.
+const EPS_ONE: f64 = f64::from_bits(0x3cbfe00000000000);
+
+/// `2^-104`, the absolute floor under that bound.
+const EPS_ONE_ABS: f64 = f64::from_bits(0x3970000000000000);
+
 /// One `f64` out of a `u64` table.
 #[cube]
 pub fn at(tab: &Array<u64>, i: u32) -> f64 {
@@ -179,7 +185,7 @@ pub fn acosh(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
             + z4 * ((at(&tab, BAND0 + 5u32) + z * at(&tab, BAND0 + 6u32))
                 + z2 * (at(&tab, BAND0 + 7u32) + z * at(&tab, BAND0 + 8u32)));
         let ds = fma64(sh * z, at(&tab, BAND0) + z * inner, sl, fk);
-        let eps = ds * f64::from_bits(0x3cbfe00000000000) - f64::from_bits(0x3970000000000000) * sh;
+        let eps = ds * EPS_ONE - EPS_ONE_ABS * sh;
         let lb = sh + (ds - eps);
         let ub = sh + (ds + eps);
         out = lb;

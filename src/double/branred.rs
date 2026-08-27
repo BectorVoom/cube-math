@@ -41,6 +41,17 @@ use cubecl::prelude::*;
 use crate::tables::consts::toverp_tab;
 use crate::tables::double::trig as t;
 
+/// `2^576`'s bit pattern, taken on the *host*.
+///
+/// Not `u64::reinterpret(t::T576)`. A reinterpretation compiles to
+/// `reinterpret_cast<uint64 const&>(x)`, which needs an lvalue, and a comptime
+/// constant reaches the backend as a literal — `double(2.47e173)` — which is
+/// an rvalue and does not compile. The CPU runtime lowers through MLIR and
+/// never sees the question, so this only shows up on a C++ backend, as a
+/// compile error inside a kernel that nothing in the source suggests. Taking
+/// the bit pattern at compile time removes the reinterpretation entirely.
+const T576_BITS: u64 = t::T576.to_bits();
+
 /// `branred.h`'s own `mp2` — the second part of its `pi/2` split.
 ///
 /// **Not** [`t::MP2`]. `usncs.h` and `branred.h` each declare a `mp2`, they
@@ -76,7 +87,7 @@ pub fn half(xh: f64) -> (f64, f64, f64) {
     // `2^576` walked down by `2^24` per digit, so that digit `k + i` lands at
     // the weight the multiply needs. Spelled as a subtraction from the
     // exponent field, which is what the C source's `mynumber` union does.
-    let mut gor = f64::reinterpret(u64::reinterpret(t::T576) - (u64::cast_from(k * 24u32) << 52u64));
+    let mut gor = f64::reinterpret(T576_BITS - (u64::cast_from(k * 24u32) << 52u64));
     let i = usize::cast_from(k);
 
     let mut r0 = xh * f64::reinterpret(toverp[i]) * gor;

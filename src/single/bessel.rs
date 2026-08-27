@@ -82,6 +82,74 @@ const ZW: u32 = 7;
 /// Rows per family.
 const ZN: u32 = 64;
 
+/// `53/512`, `beta0`'s quartic coefficient.
+const AB0_B4: f64 = f64::from_bits(0x3fba800000000000);
+
+/// `25/384`, `alpha0`'s cubic coefficient.
+const AB0_A3: f64 = f64::from_bits(0x3fb0aaaaa0000000);
+
+/// `99/512`, `beta1`'s quartic coefficient.
+const AB1_B4: f64 = f64::from_bits(0x3fc8c00000000000);
+
+/// `1899/5120`, `alpha1`'s quintic coefficient.
+const AB1_A5: f64 = f64::from_bits(0x3fd7bccccccccccd);
+
+/// Its tabulated answer. See [`J0_EXC0_X`].
+const J0_EXC0_Y: f32 = f32::from_bits(0x27250206);
+
+/// Its tabulated answer. See [`J0_EXC1_X`].
+const J0_EXC1_Y: f32 = f32::from_bits(0x33747039);
+
+/// Its tabulated answer. See [`Y0_EXC0_X`].
+const Y0_EXC0_Y: f32 = f32::from_bits(0xb0fe657a);
+
+/// Its tabulated answer. See [`Y0_EXC1_X`].
+const Y0_EXC1_Y: f32 = f32::from_bits(0x2bd244ba);
+
+/// Below this bracket, `j0f`'s asymptotic subtraction has cancelled far
+/// enough that the near-a-zero repair takes over.
+const J0_CANCEL: f32 = f32::from_bits(0x3dabcd93);
+
+/// The same for `y0f`.
+const Y0_CANCEL: f32 = f32::from_bits(0x3ddf2c2d);
+
+/// The same for `j1f`.
+const J1_CANCEL: f32 = f32::from_bits(0x3ddbcb1c);
+
+/// The same for `y1f`.
+const Y1_CANCEL: f32 = f32::from_bits(0x3e9f00a6);
+
+/// `j0`'s first zero, which the repair table is indexed from.
+const J0_ZERO0: f32 = f32::from_bits(0x4019e8a9);
+
+/// `y0`'s first zero.
+const Y0_ZERO0: f32 = f32::from_bits(0x3f64c166);
+
+/// `j1`'s first zero.
+const J1_ZERO0: f32 = f32::from_bits(0x40753aac);
+
+/// `y1`'s first zero.
+const Y1_ZERO0: f32 = f32::from_bits(0x400c9df7);
+
+/// `y0`'s first zero needs two degrees past the table's cubic; glibc
+/// hard-codes them rather than widening all 64 rows for one.
+const Y0_EXTRA4: f32 = f32::from_bits(0xbe691b24);
+
+/// See [`Y0_EXTRA4`].
+const Y0_EXTRA5: f32 = f32::from_bits(0x3e5cd51e);
+
+/// `j1`'s first zero needs one extra degree. See [`Y0_EXTRA4`].
+const J1_EXTRA4: f32 = f32::from_bits(0xbb9f28d5);
+
+/// `y1`'s first zero needs two. See [`Y0_EXTRA4`].
+const Y1_EXTRA4: f32 = f32::from_bits(0xbb940218);
+
+/// See [`Y1_EXTRA4`].
+const Y1_EXTRA5: f32 = f32::from_bits(0x3c143a0c);
+
+/// `y1`'s *second* zero needs one. See [`Y0_EXTRA4`].
+const Y1_EXTRA4B: f32 = f32::from_bits(0xbb7ff6b8);
+
 /// `|x|`'s bit pattern.
 #[cube]
 pub fn ix(x: f32) -> u32 {
@@ -202,8 +270,8 @@ pub fn ab0(x: f32) -> (f64, f64) {
     let y = 1.0 / f64::cast_from(x);
     let y2 = y * y;
     (
-        1.0 + y2 * (-0.0625 + f64::from_bits(0x3fba800000000000) * y2),
-        y * (0.125 - f64::from_bits(0x3fb0aaaaa0000000) * y2),
+        1.0 + y2 * (-0.0625 + AB0_B4 * y2),
+        y * (0.125 - AB0_A3 * y2),
     )
 }
 
@@ -215,8 +283,8 @@ pub fn ab1(x: f32) -> (f64, f64) {
     let y = 1.0 / f64::cast_from(x);
     let y2 = y * y;
     (
-        1.0 + y2 * (0.1875 - f64::from_bits(0x3fc8c00000000000) * y2),
-        y * (-0.375 + y2 * (0.1640625 - f64::from_bits(0x3fd7bccccccccccd) * y2)),
+        1.0 + y2 * (0.1875 - AB1_B4 * y2),
+        y * (-0.375 + y2 * (0.1640625 - AB1_A5 * y2)),
     )
 }
 
@@ -230,10 +298,10 @@ pub fn j0_asympt(x: f32, #[comptime] cfg: MathConfig) -> f32 {
     // Two arguments the expansion misses by more than the 9-ulp claim allows,
     // tabulated by glibc rather than fitted around.
     if u32::reinterpret(x) == 0x4ba332e9u32 {
-        out = f32::from_bits(0x27250206);
+        out = J0_EXC0_Y;
     }
     if u32::reinterpret(x) == 0x4354d7efu32 {
-        out = f32::from_bits(0x33747039);
+        out = J0_EXC1_Y;
     }
     out
 }
@@ -246,10 +314,10 @@ pub fn y0_asympt(x: f32, #[comptime] cfg: MathConfig) -> f32 {
     let tv = SQRT_2_OVER_PI / f32::sqrt(x) * f32::cast_from(beta);
     let mut out = quadrant_sin(tv, f32::cast_from(h), n, cfg);
     if u32::reinterpret(x) == 0x435fd6cbu32 {
-        out = f32::from_bits(0xb0fe657a);
+        out = Y0_EXC0_Y;
     }
     if u32::reinterpret(x) == 0x48171521u32 {
-        out = f32::from_bits(0x2bd244ba);
+        out = Y0_EXC1_Y;
     }
     out
 }
@@ -410,8 +478,8 @@ pub fn j0(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
                 out = z;
                 // A small bracket means the subtraction cancelled, and the
                 // result has lost more digits than the 9-ulp claim allows.
-                if f32::abs(cc) <= f32::from_bits(0x3dabcd93) {
-                    let (index, tabulated) = zero_index(x, f32::from_bits(0x4019e8a9), cfg);
+                if f32::abs(cc) <= J0_CANCEL {
+                    let (index, tabulated) = zero_index(x, J0_ZERO0, cfg);
                     out = j0_asympt(x, cfg);
                     if tabulated {
                         let (v, applies) = near_root(x, 0u32, index, 0.0);
@@ -482,8 +550,8 @@ pub fn y0(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
             }
             let z = (t::INVSQRTPI * ss) / f32::sqrt(x);
             out = z;
-            if f32::abs(ss) <= f32::from_bits(0x3ddf2c2d) {
-                let (index, tabulated) = zero_index(x, f32::from_bits(0x3f64c166), cfg);
+            if f32::abs(ss) <= Y0_CANCEL {
+                let (index, tabulated) = zero_index(x, Y0_ZERO0, cfg);
                 out = y0_asympt(x, cfg);
                 if tabulated {
                     // The first zero needs two extra degrees, which glibc
@@ -494,7 +562,7 @@ pub fn y0(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
                     let extra = select(
                         index > 0u32,
                         0.0,
-                        y * (f32::from_bits(0xbe691b24) + y * f32::from_bits(0x3e5cd51e)),
+                        y * (Y0_EXTRA4 + y * Y0_EXTRA5),
                     );
                     let (v, applies) = near_root(x, 1u32, index, extra);
                     out = select(applies, v, z);
@@ -551,15 +619,15 @@ pub fn j1(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
                 let zz = (t::INVSQRTPI * cc) / f32::sqrt(y);
                 let z = select(hx >> 31u32 != 0u32, -zz, zz);
                 out = z;
-                if f32::abs(cc) <= f32::from_bits(0x3ddbcb1c) {
+                if f32::abs(cc) <= J1_CANCEL {
                     let sign = select(x < 0.0, -1.0, 1.0);
-                    let (index, tabulated) = zero_index(y, f32::from_bits(0x40753aac), cfg);
+                    let (index, tabulated) = zero_index(y, J1_ZERO0, cfg);
                     out = sign * j1_asympt(y, cfg);
                     if tabulated {
                         let tabz = besself_zeros_tab();
                         let yy = y - at(&tabz, (2u32 * ZN + index) * ZW + 1u32);
                         let extra =
-                            select(index > 0u32, 0.0, yy * f32::from_bits(0xbb9f28d5));
+                            select(index > 0u32, 0.0, yy * J1_EXTRA4);
                         let (v, applies) = near_root(y, 2u32, index, extra);
                         out = select(applies, sign * v, z);
                     }
@@ -621,17 +689,17 @@ pub fn y1(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
             }
             let z = (t::INVSQRTPI * ss) / f32::sqrt(x);
             out = z;
-            if f32::abs(ss) <= f32::from_bits(0x3e9f00a6) {
-                let (index, tabulated) = zero_index(x, f32::from_bits(0x400c9df7), cfg);
+            if f32::abs(ss) <= Y1_CANCEL {
+                let (index, tabulated) = zero_index(x, Y1_ZERO0, cfg);
                 out = y1_asympt(x, cfg);
                 if tabulated {
                     let tabz = besself_zeros_tab();
                     let y = x - at(&tabz, (3u32 * ZN + index) * ZW + 1u32);
                     let mut extra = 0.0 * y;
                     if index == 0u32 {
-                        extra = y * (f32::from_bits(0xbb940218) + y * f32::from_bits(0x3c143a0c));
+                        extra = y * (Y1_EXTRA4 + y * Y1_EXTRA5);
                     } else if index == 1u32 {
-                        extra = y * f32::from_bits(0xbb7ff6b8);
+                        extra = y * Y1_EXTRA4B;
                     }
                     let (v, applies) = near_root(x, 3u32, index, extra);
                     out = select(applies, v, z);

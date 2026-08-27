@@ -1,0 +1,15 @@
+# CubeCL runtime configuration, read from the project root.
+#
+# Kernels are JIT-compiled on first use, and this crate generates a great many
+# of them: one per function, times each policy, times each multiply-add kind,
+# times each precision. The equivalence suite alone compiles over a hundred, and
+# on ROCm hipRTC is slow enough that the compilation dominates the run.
+#
+# CubeCL can persist the compiled binaries, but not by default. Turning it on
+# takes the suite's ROCm run from 25.1 s to 2.5 s, and leaves the arithmetic it
+# is actually measuring unchanged — the cache is keyed on the kernel's
+# `KernelId`, which is what the comptime policy and multiply-add already vary.
+#
+# (The autotune cache is separate and already defaults to `target`.)
+[compilation]
+cache = "target"
