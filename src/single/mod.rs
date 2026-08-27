@@ -6,3 +6,7 @@
 //! routines are separate algorithms, and matching them means porting those.
 
 pub mod exact;
+pub mod exp;
+pub mod logx;
+pub mod trig;
+pub mod wide;

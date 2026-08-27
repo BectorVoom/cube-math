@@ -130,21 +130,18 @@ impl Unary {
         }
     }
 
-    /// Whether single precision has this one yet.
+    /// Whether single precision has this one.
     ///
-    /// The IEEE-exact family does; the transcendentals do not. See the README.
+    /// Everything does now. What differs is *how*: the five that are genuine
+    /// schedule ports (`exp`, `exp2`, `exp10`, `ln`, `log2`) are bit-exact
+    /// unconditionally, and the rest are computed in double precision and
+    /// rounded once — correctly rounded, with the measured caveat
+    /// [`crate::single::wide`] states.
+    ///
+    /// Kept as a method rather than deleted because the launch side still has
+    /// to answer the question, and because the answer was not always `true`.
     pub const fn has_f32(self) -> bool {
-        matches!(
-            self,
-            Self::Sqrt
-                | Self::Abs
-                | Self::Floor
-                | Self::Ceil
-                | Self::Trunc
-                | Self::Round
-                | Self::Rint
-                | Self::Ilogb
-        )
+        true
     }
 }
 
@@ -172,11 +169,9 @@ impl UnaryPair {
         }
     }
 
-    /// Whether single precision has this one yet.
-    ///
-    /// The IEEE-exact family does; the transcendentals do not. See the README.
+    /// Whether single precision has this one. See [`Unary::has_f32`].
     pub const fn has_f32(self) -> bool {
-        matches!(self, Self::Frexp | Self::Modf)
+        true
     }
 }
 
@@ -229,6 +224,33 @@ fn kernel_f32(input: &Array<f32>, output: &mut Array<f32>, #[comptime] op: Unary
     if ABSOLUTE_POS < input.len() {
         let x = input[ABSOLUTE_POS];
         output[ABSOLUTE_POS] = match op {
+            Unary::Exp => s::exp::exp(x, cfg),
+            Unary::Exp2 => s::exp::exp2(x, cfg),
+            Unary::Exp10 => s::exp::exp10(x, cfg),
+            Unary::Ln => s::logx::ln(x, cfg),
+            Unary::Log2 => s::logx::log2(x, cfg),
+            Unary::Expm1 => s::wide::expm1(x, cfg),
+            Unary::Log10 => s::wide::log10(x, cfg),
+            Unary::Log1p => s::wide::log1p(x, cfg),
+            Unary::Cbrt => s::wide::cbrt(x, cfg),
+            Unary::Asin => s::wide::asin(x, cfg),
+            Unary::Acos => s::wide::acos(x, cfg),
+            Unary::Atan => s::wide::atan(x, cfg),
+            Unary::Sin => s::trig::sin(x, cfg),
+            Unary::Cos => s::trig::cos(x, cfg),
+            Unary::Tan => s::wide::tan(x, cfg),
+            Unary::Sinh => s::wide::sinh(x, cfg),
+            Unary::Cosh => s::wide::cosh(x, cfg),
+            Unary::Tanh => s::wide::tanh(x, cfg),
+            Unary::Atanh => s::wide::atanh(x, cfg),
+            Unary::Erf => s::wide::erf(x, cfg),
+            Unary::Erfc => s::wide::erfc(x, cfg),
+            Unary::J0 => s::wide::j0(x, cfg),
+            Unary::J1 => s::wide::j1(x, cfg),
+            Unary::Y0 => s::wide::y0(x, cfg),
+            Unary::Y1 => s::wide::y1(x, cfg),
+            Unary::LGamma => s::wide::lgamma(x, cfg),
+            Unary::TGamma => s::wide::tgamma(x, cfg),
             Unary::Sqrt => s::exact::sqrt(x, cfg),
             Unary::Abs => s::exact::abs(x, cfg),
             Unary::Floor => s::exact::floor(x, cfg),
@@ -237,9 +259,6 @@ fn kernel_f32(input: &Array<f32>, output: &mut Array<f32>, #[comptime] op: Unary
             Unary::Round => s::exact::round(x, cfg),
             Unary::Rint => s::exact::rint(x, cfg),
             Unary::Ilogb => s::exact::ilogb(x, cfg),
-            // The single-precision transcendentals are not ported; `unary`
-            // rejects them before the launch, so this arm is unreachable.
-            _ => s::exact::abs(x, cfg),
         };
     }
 }
@@ -266,9 +285,8 @@ fn kernel_pair_f32(input: &Array<f32>, o1: &mut Array<f32>, o2: &mut Array<f32>,
         let (a, b) = match op {
             UnaryPair::Frexp => s::exact::frexp(x, cfg),
             UnaryPair::Modf => s::exact::modf(x, cfg),
-            // Not ported in single precision; `unary_pair` rejects it before
-            // the launch, so this arm is unreachable.
-            _ => s::exact::modf(x, cfg),
+            UnaryPair::SinCos => s::trig::sincos(x, cfg),
+            UnaryPair::LGammaR => s::wide::lgamma_r(x, cfg),
         };
         o1[ABSOLUTE_POS] = a;
         o2[ABSOLUTE_POS] = b;

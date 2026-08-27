@@ -59,6 +59,18 @@ pub fn expf_tab() -> Array<u64> {
     Array::<u64>::from_data(comptime!(s::exp::TAB.to_vec()))
 }
 
+/// `logf`: `[1/c, log c]` for 16 subintervals, as `double`s.
+#[cube]
+pub fn logf_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!(bits(&s::log::TAB)))
+}
+
+/// `log2f`: `[1/c, log2 c]` for 16 subintervals, as `double`s.
+#[cube]
+pub fn log2f_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!(bits(&s::log2::TAB)))
+}
+
 /// `atan` / `atan2`: `[x0, t1, c2, c3, c4, c5, c6]` for 241 subintervals,
 /// indexed by `round(256 w) - 16` where `w` is the argument or its reciprocal.
 #[cube]

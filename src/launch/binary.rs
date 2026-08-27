@@ -63,9 +63,9 @@ impl Binary {
         }
     }
 
-    /// Whether single precision has this one yet.
+    /// Whether single precision has this one. See [`crate::launch::Unary::has_f32`].
     pub const fn has_f32(self) -> bool {
-        !matches!(self, Self::Pow | Self::Hypot | Self::Atan2 | Self::Jn | Self::Yn)
+        true
     }
 }
 
@@ -124,7 +124,11 @@ fn kernel_f32(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>, #[comptime] 
             Binary::Fmod => s::exact::fmod(x, y, cfg),
             Binary::Remainder => s::exact::remainder(x, y, cfg),
             Binary::NextAfter => s::exact::nextafter(x, y, cfg),
-            _ => s::exact::fmax(x, y, cfg),
+            Binary::Pow => s::wide::pow(x, y, cfg),
+            Binary::Hypot => s::wide::hypot(x, y, cfg),
+            Binary::Atan2 => s::wide::atan2(x, y, cfg),
+            Binary::Jn => s::wide::jn(x, y, cfg),
+            Binary::Yn => s::wide::yn(x, y, cfg),
         };
     }
 }

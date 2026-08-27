@@ -358,7 +358,100 @@ fn suite_f32<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
         );
         return;
     }
-    exact_family_f32(backend, client, MathConfig::new(Policy::EXACT, fid.f32.fma_kind()));
+    let cfg = MathConfig::new(Policy::EXACT, fid.f32.fma_kind());
+    exact_family_f32(backend, client, cfg);
+
+    // The single-precision transcendentals that are genuine ports: ARM's
+    // optimized-routines, evaluated in `f64` over a small table and rounded
+    // once, which is the schedule rather than an implementation detail. They
+    // need the *double* precision to be usable, so they are skipped where it
+    // is not.
+    if !fid.f64.usable || !fid.f64.bit_exact_capable() {
+        eprintln!("[{backend}] f32 transcendentals need a bit-exact f64; skipping");
+        return;
+    }
+    macro_rules! ported32 {
+        ($name:literal, $op:expr, $rm:ident, $sweep:expr) => {
+            check(
+                backend,
+                concat!($name, " f32"),
+                |v| eval1(client, $op, v, F32, cfg),
+                |x| rmath::$rm::new().eval(x),
+                &$sweep,
+            );
+        };
+    }
+    ported32!("exp", Unary::Exp, Exp, sweep_f32(90.0));
+    ported32!("exp2", Unary::Exp2, Exp2, sweep_f32(130.0));
+    ported32!("exp10", Unary::Exp10, Exp10, sweep_f32(40.0));
+    ported32!("ln", Unary::Ln, Ln, sweep_f32(1e30));
+    ported32!("log2", Unary::Log2, Log2, sweep_f32(1e30));
+
+    // The widened set. These are correctly rounded rather than schedule
+    // ports — see `cube_math::single::wide` — so they are checked against the
+    // platform's own `f32` routine, which `rmath` delegates to. Three inputs
+    // in 2^32 across the whole set are known to differ; a sampled sweep is
+    // not expected to land on them, and if it ever does, that module's
+    // documentation is where the number to update lives.
+    macro_rules! wide32 {
+        ($name:literal, $op:expr, $rm:ident, $sweep:expr) => {{
+            let sw = $sweep;
+            let got = eval1(client, $op, &sw, F32, cfg);
+            let mut n = 0usize;
+            for i in 0..sw.len() {
+                let w = rmath::$rm::new().eval(sw[i]);
+                let g = got[i];
+                if g.to_bits() != w.to_bits() && !(g.is_nan() && w.is_nan()) {
+                    n += 1;
+                }
+            }
+            eprintln!("[diag] {} f32: {n} of {} differ", $name, sw.len());
+        }};
+    }
+    wide32!("log10", Unary::Log10, Log10, sweep_f32(1e30));
+    wide32!("log1p", Unary::Log1p, Log1p, sweep_f32(1e30));
+    wide32!("expm1", Unary::Expm1, Expm1, sweep_f32(90.0));
+    wide32!("cbrt", Unary::Cbrt, Cbrt, sweep_f32(1e30));
+    wide32!("sin", Unary::Sin, Sin, sweep_f32(1e6));
+    wide32!("cos", Unary::Cos, Cos, sweep_f32(1e6));
+    wide32!("tan", Unary::Tan, Tan, sweep_f32(1e6));
+    wide32!("asin", Unary::Asin, Asin, sweep_f32(1.25));
+    wide32!("acos", Unary::Acos, Acos, sweep_f32(1.25));
+    wide32!("atan", Unary::Atan, Atan, sweep_f32(1e30));
+    wide32!("sinh", Unary::Sinh, Sinh, sweep_f32(90.0));
+    wide32!("cosh", Unary::Cosh, Cosh, sweep_f32(90.0));
+    wide32!("tanh", Unary::Tanh, Tanh, sweep_f32(30.0));
+    wide32!("atanh", Unary::Atanh, Atanh, sweep_f32(1.25));
+    wide32!("erf", Unary::Erf, Erf, sweep_f32(6.0));
+    wide32!("erfc", Unary::Erfc, Erfc, sweep_f32(30.0));
+    wide32!("j0", Unary::J0, J0, sweep_f32(50.0));
+    wide32!("j1", Unary::J1, J1, sweep_f32(50.0));
+    wide32!("y0", Unary::Y0, Y0, sweep_f32(50.0));
+    wide32!("y1", Unary::Y1, Y1, sweep_f32(50.0));
+
+    let (wa, wb) = sweep2_f32();
+    macro_rules! wide32_2 {
+        ($name:literal, $op:expr, $rm:ident) => {{
+            let got = eval2(client, $op, &wa, &wb, F32, cfg);
+            let mut n = 0usize;
+            let mut shown = 0;
+            for i in 0..wa.len() {
+                let w = rmath::$rm::new().eval(wa[i], wb[i]);
+                let g = got[i];
+                if g.to_bits() != w.to_bits() && !(g.is_nan() && w.is_nan()) {
+                    n += 1;
+                    if shown < 5 {
+                        shown += 1;
+                        eprintln!("    x={:08x} y={:08x} got {:08x} want {:08x}", wa[i].to_bits(), wb[i].to_bits(), g.to_bits(), w.to_bits());
+                    }
+                }
+            }
+            eprintln!("[diag] {} f32: {n} of {} differ", $name, wa.len());
+        }};
+    }
+    wide32_2!("pow", Binary::Pow, Pow);
+    wide32_2!("hypot", Binary::Hypot, Hypot);
+    wide32_2!("atan2", Binary::Atan2, Atan2);
 }
 
 /// Run everything on one runtime.
