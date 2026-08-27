@@ -50,7 +50,7 @@ const ATANH_TINY: f64 = f64::from_bits(0x3c90000000000000);
 /// halve the argument and multiply the result back in two steps; the reference
 /// schedule already carries that arm, so under [`crate::Domain::FullRange`] it
 /// takes those inputs back over rather than this file growing a second copy.
-const OVERFLOW: f64 = f64::from_bits(0x40862e4200000000);
+pub const OVERFLOW: f64 = f64::from_bits(0x40862e4200000000);
 
 // ---------------------------------------------------------------------------
 // sinh / cosh / tanh

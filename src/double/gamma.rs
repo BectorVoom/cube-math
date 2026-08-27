@@ -35,7 +35,7 @@
 //! longest lane in the machine.
 //!
 //! The one real difference is the logarithm underneath. `rmath` reaches for
-//! its own table-free `ln`; this reaches for [`super::ln::fast`], which is a
+//! its own table-free `ln`; this reaches for [`super::ln::fast()`], which is a
 //! different series with a different fused-multiply-add schedule. Both are
 //! inside two ulp, and `lgamma` sums up to seven of them, so the two crates
 //! agree to a few ulp rather than bit for bit. That is the honest bound for a
@@ -143,7 +143,7 @@ pub fn stirling(z: f64, #[comptime] fk: FmaKind) -> f64 {
 /// [`stirling()`] rounds `ln(z)` to a single `f64` before ever multiplying it
 /// by `z`, so what it returns already carries several ulp of error before
 /// `tgamma` even exponentiates it. This carries the logarithm in double-double
-/// throughout, through [`super::pow::pow_log`] — already exercised by `pow`'s
+/// throughout, through [`super::pow::pow_log()`] — already exercised by `pow`'s
 /// own bit-exactness tests, rather than a second unvalidated implementation —
 /// so that `hi + lo` compresses back to the correctly rounded `f64` nearest
 /// the true `ln(Gamma(z))` rather than merely a close one.

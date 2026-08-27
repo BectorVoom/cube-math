@@ -101,7 +101,7 @@ const EXC_ACC2_ROWS: u32 = 29;
 /// `x` rounded to the nearest integer, ties to even.
 ///
 /// The add-and-subtract trick rather than a `round` intrinsic, for the reason
-/// [`crate::double::exact::rint`] gives: the backends disagree about ties and
+/// [`crate::double::exact::rint()`] gives: the backends disagree about ties and
 /// the addition does not. Every caller here has `|x| < 2^22`, so the overflow
 /// guard that function carries is not needed.
 #[cube]

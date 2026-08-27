@@ -11,7 +11,7 @@
 //!   one fused multiply-add, even where the C spells it as a separate multiply
 //!   and add;
 //! * the reciprocal bands use `dla.h`'s `EMULV`, which under `__FP_FAST_FMA`
-//!   collapses to the ordinary 2Product — [`super::dd::a_mul`], reused here
+//!   collapses to the ordinary 2Product — [`super::dd::a_mul()`], reused here
 //!   rather than reinvented.
 //!
 //! # Both policies run the same code

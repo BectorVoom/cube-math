@@ -75,3 +75,61 @@ pub fn fast_sum(a: f64, bh: f64, bl: f64) -> (f64, f64) {
     let (hi, lo) = fast_two_sum(a, bh);
     (hi, lo + bl)
 }
+
+// ---------------------------------------------------------------------------
+// The CORE-MATH shapes
+// ---------------------------------------------------------------------------
+//
+// `asinh`, `acosh` and `atan2f` are ports of CORE-MATH routines, whose
+// double-double layer (glibc's `ddcoremath.h`) is *not* the one above: it
+// accumulates cross terms in a different order and normalises at different
+// points. Algebraically the two agree; bit for bit they do not, and these are
+// ports. So the shapes those routines use live here under their upstream
+// names, beside rather than instead of the ones the rest of the crate uses.
+
+/// `(xh + xl) + (ch + cl)`, without assuming an ordering. Upstream's `adddd`.
+#[cube]
+pub fn add_dd(xh: f64, xl: f64, ch: f64, cl: f64) -> (f64, f64) {
+    let s = xh + ch;
+    let d = s - xh;
+    (s, ((ch - d) + (xh + (d - s))) + (xl + cl))
+}
+
+/// `(xh + xl) (ch + cl)`, dropping the `xl cl` term. Upstream's `muldd_acc`
+/// — Joldeş, Muller and Popescu's DWTimesDW1, whose relative error is bounded
+/// by `5 u^2`.
+#[cube]
+pub fn mul_dd_acc(xh: f64, xl: f64, ch: f64, cl: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
+    let ahlh = ch * xl;
+    let alhh = cl * xh;
+    let ahhh = ch * xh;
+    let ahhl = fma64(ch, xh, -ahhh, fk) + alhh + ahlh;
+    let hi = ahhh + ahhl;
+    (hi, (ahhh - hi) + ahhl)
+}
+
+/// [`mul_dd_acc()`] closing with a true [`fast_two_sum()`] instead of its own
+/// two lines. Upstream's `muldd_acc2`.
+///
+/// The difference is real and upstream documents it: the trailing pair
+/// `ch = ahhh + ahhl; l = (ahhh - ch) + ahhl` emulates a *variant* of
+/// `fasttwosum` with the two subtractions the other way round, and the two
+/// disagree when the `|x| >= |y|` precondition does not hold.
+#[cube]
+pub fn mul_dd_acc2(xh: f64, xl: f64, ch: f64, cl: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
+    let ahlh = ch * xl;
+    let alhh = cl * xh;
+    let ahhh = ch * xh;
+    let ahhl = fma64(ch, xh, -ahhh, fk) + alhh + ahlh;
+    fast_two_sum(ahhh, ahhl)
+}
+
+/// `(xh + xl) c` for a single `c`. Upstream's `mulddd`.
+#[cube]
+pub fn mul_ddd(xh: f64, xl: f64, c: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
+    let ahlh = c * xl;
+    let ahhh = c * xh;
+    let ahhl = fma64(c, xh, -ahhh, fk) + ahlh;
+    let hi = ahhh + ahhl;
+    (hi, (ahhh - hi) + ahhl)
+}

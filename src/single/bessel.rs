@@ -663,7 +663,7 @@ pub fn y1(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
 
 /// The Bessel function of the first kind, order `n`.
 ///
-/// The same three regimes as [`crate::double::bessel::jn`], with one
+/// The same three regimes as [`crate::double::bessel::jn()`], with one
 /// difference worth noting: the forward recurrence is evaluated in `double`
 /// and rounded back to `float` each step. That is glibc's, and it is what
 /// stops the recurrence underflowing to zero long before the answer does.

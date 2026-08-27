@@ -16,6 +16,8 @@
 //! constant arrays compiled into the kernel. See [`crate::tables::consts`].
 
 pub mod bessel;
+pub mod acosh;
+pub mod asinh;
 pub mod branred;
 pub mod cbrt;
 pub mod dd;
@@ -31,6 +33,7 @@ pub mod hyper;
 pub mod hypot;
 pub mod invtrig;
 pub mod ln;
+pub mod logtab;
 pub mod log1p;
 pub mod logx;
 pub mod pow;

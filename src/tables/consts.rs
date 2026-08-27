@@ -383,6 +383,76 @@ pub fn besself_zeros_tab() -> Array<u32> {
     }))
 }
 
+/// `asinh` / `acosh`: the fast path's logarithm tables, as one flat array.
+///
+/// `B`'s 32 index-correction pairs (`c0` zero-extended, `c1` sign-extended,
+/// two slots each), then `r1`, `r2`, `l1`, `l2` and `c`. See
+/// [`crate::double::asinh`] for the offsets.
+#[cube]
+pub fn asincosh_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!({
+        let mut v: Vec<u64> = Vec::new();
+        for &(c0, c1) in d::asincosh::B.iter() {
+            v.push(c0 as u64);
+            v.push((c1 as i64) as u64);
+        }
+        v.extend(bits(&d::asincosh::R1));
+        v.extend(bits(&d::asincosh::R2));
+        v.extend(bits2(&d::asincosh::L1));
+        v.extend(bits2(&d::asincosh::L2));
+        v.extend(bits(&d::asincosh::C));
+        v
+    }))
+}
+
+/// `asinh` / `acosh`: the accurate path's `2^-k` ladder and its logarithms.
+///
+/// `t1`, `t2`, `t3`, `t4` concatenated (17 + 16 + 16 + 16), then the 204-slot
+/// `LL`, then the refinement's own series. See
+/// [`crate::tables::double::asincosh_refine`].
+#[cube]
+pub fn asincosh_refine_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!({
+        let mut v: Vec<u64> = Vec::new();
+        v.extend(d::asincosh_refine::T1);
+        v.extend(d::asincosh_refine::T2);
+        v.extend(d::asincosh_refine::T3);
+        v.extend(d::asincosh_refine::T4);
+        v.extend(d::asincosh_refine::LL);
+        v.extend(d::asincosh_refine::REFINE_CH);
+        v.extend(d::asincosh_refine::REFINE_CL);
+        v
+    }))
+}
+
+/// `asinh`: the near-zero accurate series, its fast-path bands, and its hard
+/// cases, as one flat array.
+#[cube]
+pub fn asinh_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!({
+        let mut v: Vec<u64> = Vec::new();
+        v.extend(d::asincosh_refine::ASINH_ZERO_CH);
+        v.extend(d::asincosh_refine::ASINH_ZERO_CL);
+        v.extend(d::asincosh_refine::ASINH_SMALL);
+        v.extend(d::asincosh_refine::ASINH_DB);
+        v
+    }))
+}
+
+/// `acosh`: the same three, for its own bands.
+#[cube]
+pub fn acosh_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!({
+        let mut v: Vec<u64> = Vec::new();
+        v.extend(d::asincosh_refine::ACOSH_ONE_CH);
+        v.extend(d::asincosh_refine::ACOSH_ONE_CL);
+        v.extend(d::asincosh_refine::ACOSH_BAND0);
+        v.extend(d::asincosh_refine::ACOSH_ASYMPT);
+        v.extend(d::asincosh_refine::ACOSH_DB);
+        v
+    }))
+}
+
 /// A `f64` constant that survives the trip to a C++ backend.
 ///
 /// See the module documentation: a scalar constant reaches `cubecl-cpp` as an

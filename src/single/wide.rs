@@ -96,6 +96,10 @@ widen1! { /// Hyperbolic cosine.
 cosh => d::hyper::cosh }
 widen1! { /// Hyperbolic tangent.
 tanh => d::hyper::tanh }
+widen1! { /// Inverse hyperbolic sine.
+asinh => d::asinh::asinh }
+widen1! { /// Inverse hyperbolic cosine.
+acosh => d::acosh::acosh }
 widen1! { /// Base-10 logarithm.
 log10 => d::logx::log10 }
 widen1! { /// `ln(1 + x)`.

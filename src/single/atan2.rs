@@ -54,7 +54,7 @@ pub fn offl(i: u32) -> f64 {
 
 /// `x * (ch + cl)` as a double-double, dropping the `xl cl` term.
 ///
-/// Upstream's `muldd`. Not [`crate::double::dd::d_mul`]: the two accumulate
+/// Upstream's `muldd`. Not [`crate::double::dd::d_mul()`]: the two accumulate
 /// their cross terms in a different order, and the accurate path's whole
 /// purpose is to be reproduced step for step.
 #[cube]

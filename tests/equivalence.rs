@@ -115,6 +115,8 @@ fn suite_f64<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
     single_algo!("sin", Unary::Sin, Sin, sweep_f64(1e300));
     single_algo!("cos", Unary::Cos, Cos, sweep_f64(1e300));
     single_algo!("tan", Unary::Tan, Tan, sweep_f64(1e300));
+    single_algo!("asinh", Unary::Asinh, Asinh, sweep_f64(1e300));
+    single_algo!("acosh", Unary::Acosh, Acosh, sweep_f64(1e300));
     single_algo!("erf", Unary::Erf, Erf, sweep_f64(6.0));
     single_algo!("erfc", Unary::Erfc, Erfc, sweep_f64(30.0));
     single_algo!("j0", Unary::J0, J0, sweep_f64(50.0));
@@ -419,6 +421,8 @@ fn suite_f32<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
     wide32!("sinh", Unary::Sinh, Sinh, sweep_f32(90.0));
     wide32!("cosh", Unary::Cosh, Cosh, sweep_f32(90.0));
     wide32!("tanh", Unary::Tanh, Tanh, sweep_f32(30.0));
+    wide32!("asinh", Unary::Asinh, Asinh, sweep_f32(1e30));
+    wide32!("acosh", Unary::Acosh, Acosh, sweep_f32(1e30));
     wide32!("atanh", Unary::Atanh, Atanh, sweep_f32(1.25));
     wide32!("erf", Unary::Erf, Erf, sweep_f32(6.0));
     wide32!("erfc", Unary::Erfc, Erfc, sweep_f32(30.0));

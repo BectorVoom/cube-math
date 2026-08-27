@@ -52,6 +52,10 @@ pub enum Unary {
     Cosh,
     /// Hyperbolic tangent.
     Tanh,
+    /// Inverse hyperbolic cosine.
+    Acosh,
+    /// Inverse hyperbolic sine.
+    Asinh,
     /// Inverse hyperbolic tangent.
     Atanh,
     /// The error function.
@@ -110,6 +114,8 @@ impl Unary {
             Self::Sinh => "sinh",
             Self::Cosh => "cosh",
             Self::Tanh => "tanh",
+            Self::Acosh => "acosh",
+            Self::Asinh => "asinh",
             Self::Atanh => "atanh",
             Self::Erf => "erf",
             Self::Erfc => "erfc",
@@ -198,6 +204,8 @@ fn kernel_f64(input: &Array<f64>, output: &mut Array<f64>, #[comptime] op: Unary
             Unary::Sinh => d::hyper::sinh(x, cfg),
             Unary::Cosh => d::hyper::cosh(x, cfg),
             Unary::Tanh => d::hyper::tanh(x, cfg),
+            Unary::Acosh => d::acosh::acosh(x, cfg),
+            Unary::Asinh => d::asinh::asinh(x, cfg),
             Unary::Atanh => d::hyper::atanh(x, cfg),
             Unary::Erf => d::erf::erf(x, cfg),
             Unary::Erfc => d::erfc::erfc(x, cfg),
@@ -242,6 +250,8 @@ fn kernel_f32(input: &Array<f32>, output: &mut Array<f32>, #[comptime] op: Unary
             Unary::Sinh => s::wide::sinh(x, cfg),
             Unary::Cosh => s::wide::cosh(x, cfg),
             Unary::Tanh => s::wide::tanh(x, cfg),
+            Unary::Acosh => s::wide::acosh(x, cfg),
+            Unary::Asinh => s::wide::asinh(x, cfg),
             Unary::Atanh => s::wide::atanh(x, cfg),
             Unary::Erf => s::wide::erf(x, cfg),
             Unary::Erfc => s::wide::erfc(x, cfg),
