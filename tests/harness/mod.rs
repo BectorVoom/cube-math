@@ -418,6 +418,62 @@ pub fn check<E: Elem>(
     verdict(backend, name, xs.len(), count, bad);
 }
 
+/// Compare against a reference on a *mixed* criterion: within `ulp_limit`
+/// relative ulp, or within `abs_limit` absolute, whichever the input needs.
+///
+/// For a function with zeros away from the origin — `lgamma` has two on the
+/// negative half-line — a purely relative bound is not a statement about
+/// accuracy at all. `lgamma(-2.748)` is `9.4e-4`, reached by subtracting two
+/// quantities near `1.5`, so the last ulp of those quantities is already
+/// thousands of ulp of the answer. Both crates lose it, and to slightly
+/// different places. What is worth pinning there is the absolute error, and
+/// away from the zeros the relative one.
+///
+/// Non-finite results still have to agree exactly.
+pub fn check_mixed(
+    backend: &str,
+    name: &str,
+    device: impl Fn(&[f64]) -> Vec<f64>,
+    reference: impl Fn(f64) -> f64,
+    xs: &[f64],
+    ulp_limit: f64,
+    abs_limit: f64,
+) {
+    let got = device(xs);
+    let (mut bad, mut count) = (Vec::new(), 0usize);
+    let (mut worst_ulp, mut worst_abs) = (0.0f64, 0.0f64);
+    for (x, &g) in xs.iter().zip(got.iter()) {
+        let want = reference(*x);
+        if !want.is_finite() || !g.is_finite() {
+            if !same(g, want) {
+                count += 1;
+                if bad.len() < 8 {
+                    bad.push(format!("  x = {x:e}: got {} want {}", g.hex(), want.hex()));
+                }
+            }
+            continue;
+        }
+        let abs = (g - want).abs();
+        let ulp = g.ulps_from(want);
+        if ulp > worst_ulp && abs > abs_limit {
+            worst_ulp = ulp;
+        }
+        if abs > worst_abs && ulp > ulp_limit {
+            worst_abs = abs;
+        }
+        if ulp > ulp_limit && abs > abs_limit {
+            count += 1;
+            if bad.len() < 8 {
+                bad.push(format!("  x = {x:e}: {ulp:.1} ulp, {abs:e} absolute"));
+            }
+        }
+    }
+    eprintln!(
+        "[{backend}] {name}: {worst_ulp:.1} ulp (budget {ulp_limit}), {worst_abs:e} absolute (budget {abs_limit:e})"
+    );
+    verdict(backend, name, xs.len(), count, bad);
+}
+
 /// Compare a two-argument kernel against a scalar reference.
 pub fn check2<E: Elem>(
     backend: &str,

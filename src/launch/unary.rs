@@ -66,6 +66,10 @@ pub enum Unary {
     Y0,
     /// Bessel function of the second kind, order 1.
     Y1,
+    /// `ln|Gamma(x)|`.
+    LGamma,
+    /// The Gamma function.
+    TGamma,
     /// Square root.
     Sqrt,
     /// Absolute value.
@@ -113,6 +117,8 @@ impl Unary {
             Self::J1 => "j1",
             Self::Y0 => "y0",
             Self::Y1 => "y1",
+            Self::LGamma => "lgamma",
+            Self::TGamma => "tgamma",
             Self::Sqrt => "sqrt",
             Self::Abs => "abs",
             Self::Floor => "floor",
@@ -151,6 +157,8 @@ pub enum UnaryPair {
     Modf,
     /// Sine and cosine of the same argument.
     SinCos,
+    /// `ln|Gamma(x)|` together with the sign of `Gamma(x)`.
+    LGammaR,
 }
 
 impl UnaryPair {
@@ -160,6 +168,7 @@ impl UnaryPair {
             Self::Frexp => "frexp",
             Self::Modf => "modf",
             Self::SinCos => "sincos",
+            Self::LGammaR => "lgamma_r",
         }
     }
 
@@ -201,6 +210,8 @@ fn kernel_f64(input: &Array<f64>, output: &mut Array<f64>, #[comptime] op: Unary
             Unary::J1 => d::bessel::j1(x, cfg),
             Unary::Y0 => d::bessel::y0(x, cfg),
             Unary::Y1 => d::bessel::y1(x, cfg),
+            Unary::LGamma => d::gamma::lgamma(x, cfg),
+            Unary::TGamma => d::gamma::tgamma(x, cfg),
             Unary::Sqrt => d::exact::sqrt(x, cfg),
             Unary::Abs => d::exact::abs(x, cfg),
             Unary::Floor => d::exact::floor(x, cfg),
@@ -241,6 +252,7 @@ fn kernel_pair_f64(input: &Array<f64>, o1: &mut Array<f64>, o2: &mut Array<f64>,
             UnaryPair::Frexp => d::exact::frexp(x, cfg),
             UnaryPair::Modf => d::exact::modf(x, cfg),
             UnaryPair::SinCos => d::trig::sincos(x, cfg),
+            UnaryPair::LGammaR => d::gamma::lgamma_r(x, cfg),
         };
         o1[ABSOLUTE_POS] = a;
         o2[ABSOLUTE_POS] = b;

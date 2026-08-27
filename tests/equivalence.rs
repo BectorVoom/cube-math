@@ -17,7 +17,7 @@ use cube_math::launch::{F32, F64};
 use cube_math::prelude::*;
 use cubecl::prelude::*;
 use harness::{
-    check, check2, check2_pair, check_pair, check_ulp, eval1, eval1_pair, eval2, eval2_pair,
+    check, check2, check2_pair, check_mixed, check_pair, check_ulp, eval1, eval1_pair, eval2, eval2_pair,
     sweep2_f32, sweep2_f64, sweep_f32, sweep_f64, sweep_order_f64,
 };
 use rmath::prelude::*;
@@ -225,6 +225,43 @@ fn suite_f64<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
     ported!("cosh", Unary::Cosh, Cosh, 3.0, sweep_f64(710.0));
     ported!("tanh", Unary::Tanh, Tanh, 4.0, sweep_f64(30.0));
     ported!("atanh", Unary::Atanh, Atanh, 4.0, sweep_f64(1.25));
+    // Gamma makes no bit-exactness claim in either crate — see the kernel's
+    // module docs — so it is held to an ulp bound against `rmath` under both
+    // policies rather than to the bits.
+    check_mixed(
+        backend,
+        "lgamma",
+        |v| eval1(client, Unary::LGamma, v, F64, cfg_exact),
+        |x| rmath::LGamma::new().eval(x),
+        &sweep_f64(200.0),
+        8.0,
+        1e-15,
+    );
+    // `tgamma` never touches the table-free logarithm — its recurrence is a
+    // product and its Stirling branch goes through `pow`'s double-double
+    // logarithm — so it comes out bit-identical to `rmath` despite neither
+    // crate claiming bit-exactness for the family. Held to that.
+    check(
+        backend,
+        "tgamma",
+        |v| eval1(client, Unary::TGamma, v, F64, cfg_exact),
+        |x| rmath::TGamma::new().eval(x),
+        &sweep_f64(175.0),
+    );
+    // `lgamma_r`'s *sign* is exact — it comes from the parity of `floor(x)`,
+    // not from the value — so it is checked bit for bit. The value it returns
+    // alongside is `lgamma`'s, already covered above.
+    {
+        let xs = sweep_f64(200.0);
+        let (_, signs) = eval1_pair(client, UnaryPair::LGammaR, &xs, F64, cfg_exact);
+        check(
+            backend,
+            "lgamma_r sign",
+            |_| signs.clone(),
+            |x| rmath::LGammaR::new().eval(x).1,
+            &xs,
+        );
+    }
 }
 
 /// The functions IEEE-754 pins down exactly.

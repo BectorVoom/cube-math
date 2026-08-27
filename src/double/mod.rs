@@ -26,6 +26,7 @@ pub mod exp;
 pub mod exp10;
 pub mod exp2;
 pub mod expm1;
+pub mod gamma;
 pub mod hyper;
 pub mod hypot;
 pub mod invtrig;

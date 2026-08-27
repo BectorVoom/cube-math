@@ -226,6 +226,23 @@ pub fn bessel_small_tab() -> Array<u64> {
     }))
 }
 
+/// The Gamma family's minimax polynomials, as one flat table.
+///
+/// `sin`, `cos`, Stirling's series, `lgamma` on `[1, 2]` and `Gamma` on
+/// `[1, 2]`, concatenated. See [`crate::double::gamma`] for the offsets.
+#[cube]
+pub fn gamma_poly_tab() -> Array<u64> {
+    Array::<u64>::from_data(comptime!({
+        let mut v: Vec<u64> = Vec::new();
+        v.extend(bits(&d::poly::SIN));
+        v.extend(bits(&d::poly::COS));
+        v.extend(bits(&d::poly::STIRLING));
+        v.extend(bits(&d::poly::LGAMMA));
+        v.extend(bits(&d::poly::GAMMA));
+        v
+    }))
+}
+
 /// The Bessel family's asymptotic amplitude and phase fits, as one flat table.
 ///
 /// Eight tables of four intervals each, every interval padded out to six slots
