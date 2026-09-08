@@ -26,7 +26,7 @@
 //! that element alone. IEEE-754 arithmetic rounds identically whether the
 //! operand sits in a scalar or in a lane, so the main-path elements are the
 //! scalar routine's bits by construction; the repaired ones are the scalar
-//! routine, full stop. `tests/vector_exp.rs` holds the two to `to_bits()`
+//! routine, full stop. `tests/vector.rs` holds the two to `to_bits()`
 //! equality at every width the CPU runtime offers.
 //!
 //! Why it exists: a kernel that already holds N points in a vector (a grid
