@@ -99,7 +99,11 @@ impl Precision {
 
     /// Which multiply-add the kernels should be built with here.
     pub const fn fma_kind(self) -> FmaKind {
-        if self.fused_fma { FmaKind::Hardware } else { FmaKind::Software }
+        if self.fused_fma {
+            FmaKind::Hardware
+        } else {
+            FmaKind::Software
+        }
     }
 
     /// A one-line summary, for a test log or a failure message.
@@ -108,11 +112,31 @@ impl Precision {
             return "unusable".into();
         }
         let mut s = String::new();
-        s.push_str(if self.fused_fma { "fused-fma" } else { "SPLIT-FMA" });
-        s.push_str(if self.separate_mul_add { ", no-contract" } else { ", CONTRACTS" });
-        s.push_str(if self.subnormals { ", subnormals" } else { ", FLUSHES-SUBNORMALS" });
-        s.push_str(if self.stable_arithmetic { ", no-reassoc" } else { ", REASSOCIATES" });
-        s.push_str(if self.verified { ", canary-ok" } else { ", CANARY-FAILED" });
+        s.push_str(if self.fused_fma {
+            "fused-fma"
+        } else {
+            "SPLIT-FMA"
+        });
+        s.push_str(if self.separate_mul_add {
+            ", no-contract"
+        } else {
+            ", CONTRACTS"
+        });
+        s.push_str(if self.subnormals {
+            ", subnormals"
+        } else {
+            ", FLUSHES-SUBNORMALS"
+        });
+        s.push_str(if self.stable_arithmetic {
+            ", no-reassoc"
+        } else {
+            ", REASSOCIATES"
+        });
+        s.push_str(if self.verified {
+            ", canary-ok"
+        } else {
+            ", CANARY-FAILED"
+        });
         s
     }
 }
@@ -145,7 +169,10 @@ impl Fidelity {
 
     /// Run the probe kernels on `client` and report what they found.
     pub fn measure<R: Runtime>(client: &ComputeClient<R>) -> Self {
-        let mut out = Self { f64: measure_f64(client), f32: measure_f32(client) };
+        let mut out = Self {
+            f64: measure_f64(client),
+            f32: measure_f32(client),
+        };
         if out.f64.usable {
             let (exact, approx) = canary_f64(client, out.f64.fma_kind());
             out.f64.verified = exact;
@@ -319,7 +346,8 @@ fn measure_f32<R: Runtime>(client: &ComputeClient<R>) -> Precision {
 fn canary_k64(inp: &Array<f64>, out: &mut Array<f64>, #[comptime] fk: FmaKind) {
     if ABSOLUTE_POS < inp.len() {
         let x = inp[ABSOLUTE_POS];
-        out[ABSOLUTE_POS] = crate::double::exp::exp(x, comptime!(MathConfig::new(Policy::EXACT, fk)));
+        out[ABSOLUTE_POS] =
+            crate::double::exp::exp(x, comptime!(MathConfig::new(Policy::EXACT, fk)));
         out[ABSOLUTE_POS + 8] =
             crate::double::exp::exp(x, comptime!(MathConfig::new(Policy::FAST, fk)));
     }

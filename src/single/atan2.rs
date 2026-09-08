@@ -26,8 +26,8 @@ use cubecl::prelude::*;
 
 use crate::bits::opaque32;
 use crate::config::MathConfig;
-use crate::single::exact::copysign;
 use crate::fma::{FmaKind, fma64};
+use crate::single::exact::copysign;
 use crate::tables::single::atan2 as t;
 
 /// `2^-60`. `th + th * 2^-60 == th - th * 2^-60` holds exactly when `th` is a
@@ -141,7 +141,10 @@ pub fn atan2(y0: f32, x0: f32, #[comptime] cfg: MathConfig) -> f32 {
             // The sign is `y`'s throughout; applied by `copysign` rather than
             // by a multiply, because a literal zero times a runtime sign is
             // something the backends fold to `+0`.
-            out = copysign(f32::cast_from(select(ux >> 31u32 != 0u32, t::TQPI, t::QPI)), y);
+            out = copysign(
+                f32::cast_from(select(ux >> 31u32 != 0u32, t::TQPI, t::QPI)),
+                y,
+            );
             done = true;
         } else if ax == 0x7f80_0000u32 {
             out = copysign(f32::cast_from(select(ux >> 31u32 != 0u32, t::PI, 0.0)), y);
@@ -228,9 +231,7 @@ pub fn atan2(y0: f32, x0: f32, #[comptime] cfg: MathConfig) -> f32 {
                 let th = f64::cast_from(rf);
                 let dh = sh - th;
                 let mut tm = dh + sl;
-                if th + th * TWO_M60
-                    == th - th * TWO_M60
-                {
+                if th + th * TWO_M60 == th - th * TWO_M60 {
                     // `th` is a power of two, where the neighbouring `f32`
                     // spacings differ and the correction has to be scaled to
                     // the side it falls on.

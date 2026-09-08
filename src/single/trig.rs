@@ -91,7 +91,10 @@ pub fn reduce_large(xi0: u32) -> (f64, u32) {
 
     let n = (res0 + (1u64 << 61u64)) >> 62u64;
     let rem = res0 - (n << 62u64);
-    (f64::cast_from(i64::reinterpret(rem)) * t::PI63, u32::cast_from(n))
+    (
+        f64::cast_from(i64::reinterpret(rem)) * t::PI63,
+        u32::cast_from(n),
+    )
 }
 
 /// The shared polynomial. `cos_branch` picks the cosine coefficients over the

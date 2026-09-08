@@ -11,8 +11,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::MathConfig;
 use crate::bits::neg_inf64;
+use crate::config::MathConfig;
 use crate::fma::{FmaKind, fma64};
 use crate::tables::consts::log2_tab;
 use crate::tables::double::log2 as t;
@@ -205,21 +205,21 @@ pub fn log10(x: f64, #[comptime] cfg: MathConfig) -> f64 {
 /// The reduce-and-delegate path, for already-normalised bits.
 #[cube]
 pub fn log10_main(b: u64) -> f64 {
-        // An *arithmetic* shift: `normalised_bits` can leave the exponent
-        // field negative for a renormalised subnormal, and reading it as an
-        // unsigned field would turn that into a huge positive exponent.
-        let k = (i64::reinterpret(b) >> 52i64) - 1023i64;
-        // `i` is glibc's own rounding-parity bit: 1 when `k` is negative.
-        let i = i64::reinterpret(u64::reinterpret(k) >> 63u64);
-        let y = f64::cast_from(k + i);
-        let exp_field = (1023u64 - u64::reinterpret(i)) << 52u64;
-        let reduced = f64::reinterpret((b & 0x000f_ffff_ffff_ffffu64) | exp_field);
+    // An *arithmetic* shift: `normalised_bits` can leave the exponent
+    // field negative for a renormalised subnormal, and reading it as an
+    // unsigned field would turn that into a huge positive exponent.
+    let k = (i64::reinterpret(b) >> 52i64) - 1023i64;
+    // `i` is glibc's own rounding-parity bit: 1 when `k` is negative.
+    let i = i64::reinterpret(u64::reinterpret(k) >> 63u64);
+    let y = f64::cast_from(k + i);
+    let exp_field = (1023u64 - u64::reinterpret(i)) << 52u64;
+    let reduced = f64::reinterpret((b & 0x000f_ffff_ffff_ffffu64) | exp_field);
 
-        // The *whole* of `ln`, near-one path included — that is what
-        // `__log10_finite` calls. Going straight to the table walk would make
-        // `log10(1)` a tiny nonzero instead of an exact zero.
-        let lr = crate::double::ln::bit_exact(reduced);
-        // Deliberately not fused: the disassembly has three separate
-        // multiply/add pairs here, not a fusion opportunity.
-        (lr * INV_LN10 + y * LOG10_2LO) + y * LOG10_2HI
+    // The *whole* of `ln`, near-one path included — that is what
+    // `__log10_finite` calls. Going straight to the table walk would make
+    // `log10(1)` a tiny nonzero instead of an exact zero.
+    let lr = crate::double::ln::bit_exact(reduced);
+    // Deliberately not fused: the disassembly has three separate
+    // multiply/add pairs here, not a fusion opportunity.
+    (lr * INV_LN10 + y * LOG10_2LO) + y * LOG10_2HI
 }

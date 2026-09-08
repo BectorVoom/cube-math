@@ -71,6 +71,10 @@ impl MathConfig {
     /// fused multiply-add to feed an approximation would be paying for
     /// precision the caller has already said they do not want.
     pub const fn fma(self) -> FmaKind {
-        if self.policy.bit_exact() { self.fma } else { FmaKind::Hardware }
+        if self.policy.bit_exact() {
+            self.fma
+        } else {
+            FmaKind::Hardware
+        }
     }
 }

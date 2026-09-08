@@ -12,8 +12,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::MathConfig;
 use crate::bits::neg_inf64;
+use crate::config::MathConfig;
 use crate::fma::{FmaKind, fma64};
 use crate::tables::consts::log_tab;
 use crate::tables::double::log as t;

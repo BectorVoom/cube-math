@@ -36,7 +36,9 @@ const N: usize = 1 << 20;
 const REPS: usize = 20;
 
 fn data(lo: f64, hi: f64) -> Vec<f64> {
-    (0..N).map(|i| lo + (hi - lo) * (i as f64) / (N as f64)).collect()
+    (0..N)
+        .map(|i| lo + (hi - lo) * (i as f64) / (N as f64))
+        .collect()
 }
 
 fn timed(label: &str, n: usize, mut run: impl FnMut()) {
@@ -46,7 +48,11 @@ fn timed(label: &str, n: usize, mut run: impl FnMut()) {
         run();
     }
     let el = t.elapsed().as_secs_f64() / REPS as f64;
-    println!("{label:<26} {:>8.3} ms  {:>9.1} Melem/s", el * 1e3, n as f64 / el / 1e6);
+    println!(
+        "{label:<26} {:>8.3} ms  {:>9.1} Melem/s",
+        el * 1e3,
+        n as f64 / el / 1e6
+    );
 }
 
 /// Wait for the queue to drain, without copying anything back.
@@ -84,8 +90,13 @@ fn cpu_baselines(xs: &[f64]) {
     });
 }
 
+/// Stage a host slice on the device.
+///
+/// `create_from_slice` copies out of `xs` directly. The `Bytes::from_elems`
+/// spelling wants an owned `Vec`, which here would mean cloning the whole
+/// slice onto the heap first — off the clock, but for nothing.
 fn upload<R: Runtime>(client: &ComputeClient<R>, xs: &[f64]) -> TensorHandle<R> {
-    let h = client.create(cubecl::bytes::Bytes::from_elems(xs.to_vec()));
+    let h = client.create_from_slice(f64::as_bytes(xs));
     TensorHandle::new_contiguous(vec![xs.len()], h, F64)
 }
 
@@ -101,7 +112,11 @@ fn bench<R: Runtime>(name: &str) {
         println!("(NOT bit-exact capable; these are the Fast policy's numbers)");
     }
     let cfg = MathConfig::new(
-        if fid.f64.bit_exact_capable() { Policy::EXACT } else { Policy::FAST },
+        if fid.f64.bit_exact_capable() {
+            Policy::EXACT
+        } else {
+            Policy::FAST
+        },
         fid.f64.fma_kind(),
     );
 
@@ -112,7 +127,15 @@ fn bench<R: Runtime>(name: &str) {
         let input = upload(&client, xs);
         let output = TensorHandle::<R>::empty(&client, vec![xs.len()], F64);
         timed(label, xs.len(), || {
-            unary(&client, op, input.clone().binding(), output.clone().binding(), F64, cfg).unwrap();
+            unary(
+                &client,
+                op,
+                input.clone().binding(),
+                output.clone().binding(),
+                F64,
+                cfg,
+            )
+            .unwrap();
             wait(&client);
         });
     };
@@ -173,7 +196,15 @@ fn bench<R: Runtime>(name: &str) {
         let input = upload(&client, &wide);
         let output = TensorHandle::<R>::empty(&client, vec![N], F64);
         let h = output.handle.clone();
-        unary(&client, Unary::Exp, input.binding(), output.binding(), F64, cfg).unwrap();
+        unary(
+            &client,
+            Unary::Exp,
+            input.binding(),
+            output.binding(),
+            F64,
+            cfg,
+        )
+        .unwrap();
         let _ = client.read_one(h);
     });
 }

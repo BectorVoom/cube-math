@@ -72,9 +72,7 @@ pub fn checkint(iy: u32) -> u32 {
 #[cube]
 pub fn is_signaling(x: f32) -> bool {
     let b = u32::reinterpret(x);
-    b & 0x7f80_0000u32 == 0x7f80_0000u32
-        && b & 0x007f_ffffu32 != 0u32
-        && b & 0x0040_0000u32 == 0u32
+    b & 0x7f80_0000u32 == 0x7f80_0000u32 && b & 0x007f_ffffu32 != 0u32 && b & 0x0040_0000u32 == 0u32
 }
 
 /// `log2(x)` from already-normalised bits, in double precision.

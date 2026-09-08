@@ -31,9 +31,9 @@ use crate::bits::opaque64;
 use crate::config::MathConfig;
 use crate::double::dd::{fast_two_sum, mul_dd_acc, mul_ddd};
 use crate::double::exact::copysign;
-use crate::fma::{FmaKind, fma64};
 use crate::double::logtab as lt;
 use crate::double::logtab::LOG2E;
+use crate::fma::{FmaKind, fma64};
 use crate::tables::consts::asinh_tab;
 
 /// Offsets into [`asinh_tab()`].

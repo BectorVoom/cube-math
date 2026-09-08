@@ -14,8 +14,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::MathConfig;
 use crate::bits::inf64;
+use crate::config::MathConfig;
 use crate::fma::{FmaKind, fma64};
 use crate::tables::consts::exp_tab;
 use crate::tables::double::exp as t;

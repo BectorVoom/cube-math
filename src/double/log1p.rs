@@ -12,8 +12,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::MathConfig;
 use crate::bits::neg_inf64;
+use crate::config::MathConfig;
 use crate::fma::{FmaKind, fma64};
 
 /// High part of `ln(2)`; `n * LN2_HI` is exact for every `|n| < 2000`.
@@ -189,7 +189,11 @@ pub fn tail(f: f64, hu: u32, k: i32, c: f64) -> f64 {
             // `kf*LN2_HI - (...)` is one fused operation, and so is
             // `kf*LN2_LO + c`. Both matter: this is the branch that dominates
             // large-`|x|` inputs.
-            out = fma(kf, LN2_HI, -((hfsq - (s * (hfsq + r) + fma(kf, LN2_LO, c))) - f));
+            out = fma(
+                kf,
+                LN2_HI,
+                -((hfsq - (s * (hfsq + r) + fma(kf, LN2_LO, c))) - f),
+            );
         }
     }
     out

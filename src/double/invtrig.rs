@@ -45,8 +45,8 @@ use crate::fma::{FmaKind, fma64};
 use crate::tables::consts::{asncs_tab, atan_cij_tab, inroot_tab, powtwo_tab};
 use crate::tables::double::asincos_data as ac;
 use crate::tables::double::asincos_packed as pk;
-use crate::tables::double::atan2_data as at2;
 use crate::tables::double::atan_data as at;
+use crate::tables::double::atan2_data as at2;
 
 /// `2^52`: added to round a small positive `f64` to the nearest integer, then
 /// subtracted back off.
@@ -94,7 +94,12 @@ pub fn atan_table(u: f64, #[comptime] fk: FmaKind) -> f64 {
     let tab = atan_cij_tab();
     let row = usize::cast_from(table_index(u) * 7u32);
     let z = u - f64::reinterpret(tab[row]);
-    let mut yy = fma64(z, f64::reinterpret(tab[row + 6]), f64::reinterpret(tab[row + 5]), fk);
+    let mut yy = fma64(
+        z,
+        f64::reinterpret(tab[row + 6]),
+        f64::reinterpret(tab[row + 5]),
+        fk,
+    );
     yy = fma64(z, yy, f64::reinterpret(tab[row + 4]), fk);
     yy = fma64(z, yy, f64::reinterpret(tab[row + 3]), fk);
     yy = fma64(z, yy, f64::reinterpret(tab[row + 2]), fk);
@@ -110,7 +115,12 @@ pub fn atan_recip_table(u: f64, #[comptime] fk: FmaKind) -> f64 {
     let tab = atan_cij_tab();
     let row = usize::cast_from(table_index(w) * 7u32);
     let z = fma64(s, w, w - f64::reinterpret(tab[row]), fk);
-    let mut yy = fma64(z, f64::reinterpret(tab[row + 6]), f64::reinterpret(tab[row + 5]), fk);
+    let mut yy = fma64(
+        z,
+        f64::reinterpret(tab[row + 6]),
+        f64::reinterpret(tab[row + 5]),
+        fk,
+    );
     yy = fma64(z, yy, f64::reinterpret(tab[row + 4]), fk);
     yy = fma64(z, yy, f64::reinterpret(tab[row + 3]), fk);
     yy = fma64(z, yy, f64::reinterpret(tab[row + 2]), fk);
@@ -210,7 +220,12 @@ pub fn atan2_i_table(u: f64, du: f64, #[comptime] fk: FmaKind) -> f64 {
     let t2 = f64::reinterpret(tab[row + 2]);
     let t3 = u - f64::reinterpret(tab[row]);
     let (v, dv) = two_sum(t3, du);
-    let mut poly = fma64(v, f64::reinterpret(tab[row + 6]), f64::reinterpret(tab[row + 5]), fk);
+    let mut poly = fma64(
+        v,
+        f64::reinterpret(tab[row + 6]),
+        f64::reinterpret(tab[row + 5]),
+        fk,
+    );
     poly = fma64(v, poly, f64::reinterpret(tab[row + 4]), fk);
     poly = fma64(v, poly, f64::reinterpret(tab[row + 3]), fk);
     let inner = fma64(v * v, poly, dv * t2, fk);
@@ -234,7 +249,12 @@ pub fn atan2_table_shared(
     let tab = atan_cij_tab();
     let row = usize::cast_from(table_index(u) * 7u32);
     let v = (u - f64::reinterpret(tab[row])) + du;
-    let mut poly = fma64(v, f64::reinterpret(tab[row + 6]), f64::reinterpret(tab[row + 5]), fk);
+    let mut poly = fma64(
+        v,
+        f64::reinterpret(tab[row + 6]),
+        f64::reinterpret(tab[row + 5]),
+        fk,
+    );
     poly = fma64(v, poly, f64::reinterpret(tab[row + 4]), fk);
     poly = fma64(v, poly, f64::reinterpret(tab[row + 3]), fk);
     poly = fma64(v, poly, f64::reinterpret(tab[row + 2]), fk);
@@ -445,7 +465,10 @@ pub fn asncs_poly(xx: f64, base: u32, #[comptime] fk: FmaKind) -> (f64, f64) {
     val = fma64(xx, val, f64::reinterpret(tab[row + 2]), fk);
     val = fma64(xx, val, f64::reinterpret(tab[row + 1]), fk);
     let p = fma64(xx * xx, val, f64::reinterpret(tab[row + 10]), fk);
-    (fma64(xx, f64::reinterpret(tab[row]), p, fk), f64::reinterpret(tab[row + 11]))
+    (
+        fma64(xx, f64::reinterpret(tab[row]), p, fk),
+        f64::reinterpret(tab[row + 11]),
+    )
 }
 
 /// `1/sqrt(z)`'s seed from a bit-pattern lookup, refined by a degree-3

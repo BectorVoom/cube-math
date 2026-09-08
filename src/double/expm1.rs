@@ -13,8 +13,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::MathConfig;
 use crate::bits::is_nan64;
+use crate::config::MathConfig;
 use crate::fma::{FmaKind, fma64};
 
 /// `ln(DBL_MAX)`, above which `e^x - 1` overflows.

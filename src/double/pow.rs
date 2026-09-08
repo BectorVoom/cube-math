@@ -27,8 +27,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::MathConfig;
 use crate::bits::{inf64, neg_inf64};
+use crate::config::MathConfig;
 use crate::tables::consts::{exp_tab, pow_tab};
 use crate::tables::double::exp as et;
 use crate::tables::double::pow as pt;
@@ -293,7 +293,11 @@ pub fn specialcase(tmp: f64, sbits0: u64, ki: u64) -> f64 {
             let lo = one - hi + y + lo0;
             y = (hi + lo) - one;
             // Fix the sign of a zero the renormalisation produced.
-            y = select(y == 0.0, f64::reinterpret(sbits & 0x8000_0000_0000_0000u64), y);
+            y = select(
+                y == 0.0,
+                f64::reinterpret(sbits & 0x8000_0000_0000_0000u64),
+                y,
+            );
         }
         out = P_M1022 * y;
     }

@@ -43,7 +43,7 @@ use crate::double::dd::{a_mul, fast_two_sum, two_sum};
 use crate::double::exact::copysign;
 use crate::fma::{FmaKind, fma64};
 use crate::tables::consts::{
-    erf_c0_tab, erf_c2_tab, erf_c_tab, erf_exc_tab, erf_exc_tiny_tab, erf_p_tab,
+    erf_c_tab, erf_c0_tab, erf_c2_tab, erf_exc_tab, erf_exc_tiny_tab, erf_p_tab,
 };
 
 /// `CH + CL` is `2/sqrt(pi)` to double-double precision.
@@ -168,11 +168,28 @@ pub fn erf_fast(z0: f64, #[comptime] fk: FmaKind) -> (f64, f64, f64) {
 
         let z2 = z * z;
         let z4 = z2 * z2;
-        let c9 = fma64(f64::reinterpret(tab[c + 12]), z, f64::reinterpret(tab[c + 11]), fk);
-        let c7a = fma64(f64::reinterpret(tab[c + 10]), z, f64::reinterpret(tab[c + 9]), fk);
-        let c5 = fma64(f64::reinterpret(tab[c + 8]), z, f64::reinterpret(tab[c + 7]), fk);
-        let (c3h0, c3l0) =
-            fast_two_sum(f64::reinterpret(tab[c + 5]), z * f64::reinterpret(tab[c + 6]));
+        let c9 = fma64(
+            f64::reinterpret(tab[c + 12]),
+            z,
+            f64::reinterpret(tab[c + 11]),
+            fk,
+        );
+        let c7a = fma64(
+            f64::reinterpret(tab[c + 10]),
+            z,
+            f64::reinterpret(tab[c + 9]),
+            fk,
+        );
+        let c5 = fma64(
+            f64::reinterpret(tab[c + 8]),
+            z,
+            f64::reinterpret(tab[c + 7]),
+            fk,
+        );
+        let (c3h0, c3l0) = fast_two_sum(
+            f64::reinterpret(tab[c + 5]),
+            z * f64::reinterpret(tab[c + 6]),
+        );
         let c7 = fma64(c9, z2, c7a, fk);
 
         let (c3h1, tl5) = fast_two_sum(c3h0, c5 * z2);
@@ -233,10 +250,38 @@ pub fn erf_accurate_tiny(
 
     let (h9, l9) = dd_step_odd(h, l, z, f64::reinterpret(p[9]), fk);
     let (h8, l8) = dd_step_odd(h9, l9, z, f64::reinterpret(p[8]), fk);
-    let (h6, l6) = dd_step_odd2(h8, l8, z, f64::reinterpret(p[6]), f64::reinterpret(p[7]), fk);
-    let (h4, l4) = dd_step_odd2(h6, l6, z, f64::reinterpret(p[4]), f64::reinterpret(p[5]), fk);
-    let (h2, l2) = dd_step_odd2(h4, l4, z, f64::reinterpret(p[2]), f64::reinterpret(p[3]), fk);
-    let (h0, l0) = dd_step_odd2(h2, l2, z, f64::reinterpret(p[0]), f64::reinterpret(p[1]), fk);
+    let (h6, l6) = dd_step_odd2(
+        h8,
+        l8,
+        z,
+        f64::reinterpret(p[6]),
+        f64::reinterpret(p[7]),
+        fk,
+    );
+    let (h4, l4) = dd_step_odd2(
+        h6,
+        l6,
+        z,
+        f64::reinterpret(p[4]),
+        f64::reinterpret(p[5]),
+        fk,
+    );
+    let (h2, l2) = dd_step_odd2(
+        h4,
+        l4,
+        z,
+        f64::reinterpret(p[2]),
+        f64::reinterpret(p[3]),
+        fk,
+    );
+    let (h0, l0) = dd_step_odd2(
+        h2,
+        l2,
+        z,
+        f64::reinterpret(p[0]),
+        f64::reinterpret(p[1]),
+        fk,
+    );
 
     let (hf, tl) = a_mul(h0, z, fk);
     let mut rh = hf;
@@ -291,22 +336,70 @@ pub fn erf_accurate(z0: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
         // ...then eight carrying a double-double one. `two_sum` rather than
         // `fast_two_sum` throughout: for band 3 the degree-7 coefficient is
         // smaller than the degree-8 one, so `|a| >= |b|` does not hold.
-        let (h14, l14) =
-            dd_step2(h16, l16, z, f64::reinterpret(tab[p + 14]), f64::reinterpret(tab[p + 15]), fk);
-        let (h12, l12) =
-            dd_step2(h14, l14, z, f64::reinterpret(tab[p + 12]), f64::reinterpret(tab[p + 13]), fk);
-        let (h10, l10) =
-            dd_step2(h12, l12, z, f64::reinterpret(tab[p + 10]), f64::reinterpret(tab[p + 11]), fk);
-        let (h8, l8) =
-            dd_step2(h10, l10, z, f64::reinterpret(tab[p + 8]), f64::reinterpret(tab[p + 9]), fk);
-        let (h6, l6) =
-            dd_step2(h8, l8, z, f64::reinterpret(tab[p + 6]), f64::reinterpret(tab[p + 7]), fk);
-        let (h4, l4) =
-            dd_step2(h6, l6, z, f64::reinterpret(tab[p + 4]), f64::reinterpret(tab[p + 5]), fk);
-        let (h2, l2) =
-            dd_step2(h4, l4, z, f64::reinterpret(tab[p + 2]), f64::reinterpret(tab[p + 3]), fk);
-        let (h0, l0) =
-            dd_step2(h2, l2, z, f64::reinterpret(tab[p]), f64::reinterpret(tab[p + 1]), fk);
+        let (h14, l14) = dd_step2(
+            h16,
+            l16,
+            z,
+            f64::reinterpret(tab[p + 14]),
+            f64::reinterpret(tab[p + 15]),
+            fk,
+        );
+        let (h12, l12) = dd_step2(
+            h14,
+            l14,
+            z,
+            f64::reinterpret(tab[p + 12]),
+            f64::reinterpret(tab[p + 13]),
+            fk,
+        );
+        let (h10, l10) = dd_step2(
+            h12,
+            l12,
+            z,
+            f64::reinterpret(tab[p + 10]),
+            f64::reinterpret(tab[p + 11]),
+            fk,
+        );
+        let (h8, l8) = dd_step2(
+            h10,
+            l10,
+            z,
+            f64::reinterpret(tab[p + 8]),
+            f64::reinterpret(tab[p + 9]),
+            fk,
+        );
+        let (h6, l6) = dd_step2(
+            h8,
+            l8,
+            z,
+            f64::reinterpret(tab[p + 6]),
+            f64::reinterpret(tab[p + 7]),
+            fk,
+        );
+        let (h4, l4) = dd_step2(
+            h6,
+            l6,
+            z,
+            f64::reinterpret(tab[p + 4]),
+            f64::reinterpret(tab[p + 5]),
+            fk,
+        );
+        let (h2, l2) = dd_step2(
+            h4,
+            l4,
+            z,
+            f64::reinterpret(tab[p + 2]),
+            f64::reinterpret(tab[p + 3]),
+            fk,
+        );
+        let (h0, l0) = dd_step2(
+            h2,
+            l2,
+            z,
+            f64::reinterpret(tab[p]),
+            f64::reinterpret(tab[p + 1]),
+            fk,
+        );
         rh = h0;
         rl = l0;
     }

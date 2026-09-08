@@ -40,7 +40,10 @@ impl fmt::Display for MathError {
                 write!(f, "cube-math has no `{op}` for {dtype} yet")
             }
             Self::LengthMismatch { left, right } => {
-                write!(f, "arguments must have the same length, got {left} and {right}")
+                write!(
+                    f,
+                    "arguments must have the same length, got {left} and {right}"
+                )
             }
             Self::Launch(e) => write!(f, "launch failed: {e:?}"),
         }

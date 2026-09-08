@@ -44,13 +44,25 @@ pub struct Policy {
 
 impl Policy {
     /// `BitExact` + `FullRange` — the default, safe on any input.
-    pub const EXACT: Self = Self { accuracy: Accuracy::BitExact, domain: Domain::FullRange };
+    pub const EXACT: Self = Self {
+        accuracy: Accuracy::BitExact,
+        domain: Domain::FullRange,
+    };
     /// `Fast` + `FullRange` — approximate, still safe on any input.
-    pub const FAST: Self = Self { accuracy: Accuracy::Fast, domain: Domain::FullRange };
+    pub const FAST: Self = Self {
+        accuracy: Accuracy::Fast,
+        domain: Domain::FullRange,
+    };
     /// `Fast` + `Finite` — approximate, and the caller vouches for the inputs.
-    pub const FAST_FINITE: Self = Self { accuracy: Accuracy::Fast, domain: Domain::Finite };
+    pub const FAST_FINITE: Self = Self {
+        accuracy: Accuracy::Fast,
+        domain: Domain::Finite,
+    };
     /// `BitExact` + `Finite`.
-    pub const EXACT_FINITE: Self = Self { accuracy: Accuracy::BitExact, domain: Domain::Finite };
+    pub const EXACT_FINITE: Self = Self {
+        accuracy: Accuracy::BitExact,
+        domain: Domain::Finite,
+    };
 
     /// True when the reference schedule is required.
     pub const fn bit_exact(self) -> bool {

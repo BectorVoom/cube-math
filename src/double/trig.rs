@@ -299,7 +299,11 @@ pub fn sincos(x0: f64, #[comptime] cfg: MathConfig) -> (f64, f64) {
 pub fn xfg_row(w: f64, #[comptime] fk: FmaKind) -> (f64, f64, f64) {
     let tab = tan_xfg_tab();
     let i = usize::cast_from(u32::cast_from(fma64(w, 256.0, t::MFFTNHF, fk)) * 3u32);
-    (f64::reinterpret(tab[i]), f64::reinterpret(tab[i + 1]), f64::reinterpret(tab[i + 2]))
+    (
+        f64::reinterpret(tab[i]),
+        f64::reinterpret(tab[i + 1]),
+        f64::reinterpret(tab[i + 2]),
+    )
 }
 
 /// `pz`, the odd correction polynomial the table bands interpolate with.

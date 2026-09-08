@@ -45,8 +45,8 @@ use crate::double::erf::{erf_accurate, erf_fast};
 use crate::double::exact::ldexp;
 use crate::fma::{FmaKind, fma64};
 use crate::tables::consts::{
-    erfc_e2_tab, erfc_exc_acc2_tab, erfc_exc_acc_tab, erfc_exc_tab, erfc_q1_tab, erfc_t1_tab,
-    erfc_t2_tab, erfc_t_tab, erfc_tacc_tab,
+    erfc_e2_tab, erfc_exc_acc_tab, erfc_exc_acc2_tab, erfc_exc_tab, erfc_q1_tab, erfc_t_tab,
+    erfc_t1_tab, erfc_t2_tab, erfc_tacc_tab,
 };
 
 /// `2^12 / ln(2)`, [`exp_1()`]'s reduction scale.
@@ -197,7 +197,14 @@ pub fn exp_1(xh: f64, xl: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
 
 /// One step of [`exp_accurate()`]'s double-double Horner fold.
 #[cube]
-pub fn exp_acc_step(h: f64, l: f64, yh: f64, yl: f64, c: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
+pub fn exp_acc_step(
+    h: f64,
+    l: f64,
+    yh: f64,
+    yl: f64,
+    c: f64,
+    #[comptime] fk: FmaKind,
+) -> (f64, f64) {
     let (th, tl0) = a_mul(h, yh, fk);
     let tl1 = fma64(h, yl, tl0, fk);
     let tl = fma64(l, yh, tl1, fk);
@@ -270,22 +277,78 @@ pub fn exp_accurate(xh: f64, xl: f64, #[comptime] fk: FmaKind) -> (f64, f64, i32
     let (h7, l7) = exp_acc_step(h6, l6, yh, yl, f64::reinterpret(e2[17]), fk);
     let (h8, l8) = exp_acc_step(h7, l7, yh, yl, f64::reinterpret(e2[16]), fk);
 
-    let (h9, l9) =
-        exp_acc_step2(h8, l8, yh, yl, f64::reinterpret(e2[14]), f64::reinterpret(e2[15]), fk);
-    let (h10, l10) =
-        exp_acc_step2(h9, l9, yh, yl, f64::reinterpret(e2[12]), f64::reinterpret(e2[13]), fk);
-    let (h11, l11) =
-        exp_acc_step2(h10, l10, yh, yl, f64::reinterpret(e2[10]), f64::reinterpret(e2[11]), fk);
-    let (h12, l12) =
-        exp_acc_step2(h11, l11, yh, yl, f64::reinterpret(e2[8]), f64::reinterpret(e2[9]), fk);
-    let (h13, l13) =
-        exp_acc_step2(h12, l12, yh, yl, f64::reinterpret(e2[6]), f64::reinterpret(e2[7]), fk);
-    let (h14, l14) =
-        exp_acc_step2(h13, l13, yh, yl, f64::reinterpret(e2[4]), f64::reinterpret(e2[5]), fk);
-    let (h15, l15) =
-        exp_acc_step2(h14, l14, yh, yl, f64::reinterpret(e2[2]), f64::reinterpret(e2[3]), fk);
-    let (h16, l16) =
-        exp_acc_step2(h15, l15, yh, yl, f64::reinterpret(e2[0]), f64::reinterpret(e2[1]), fk);
+    let (h9, l9) = exp_acc_step2(
+        h8,
+        l8,
+        yh,
+        yl,
+        f64::reinterpret(e2[14]),
+        f64::reinterpret(e2[15]),
+        fk,
+    );
+    let (h10, l10) = exp_acc_step2(
+        h9,
+        l9,
+        yh,
+        yl,
+        f64::reinterpret(e2[12]),
+        f64::reinterpret(e2[13]),
+        fk,
+    );
+    let (h11, l11) = exp_acc_step2(
+        h10,
+        l10,
+        yh,
+        yl,
+        f64::reinterpret(e2[10]),
+        f64::reinterpret(e2[11]),
+        fk,
+    );
+    let (h12, l12) = exp_acc_step2(
+        h11,
+        l11,
+        yh,
+        yl,
+        f64::reinterpret(e2[8]),
+        f64::reinterpret(e2[9]),
+        fk,
+    );
+    let (h13, l13) = exp_acc_step2(
+        h12,
+        l12,
+        yh,
+        yl,
+        f64::reinterpret(e2[6]),
+        f64::reinterpret(e2[7]),
+        fk,
+    );
+    let (h14, l14) = exp_acc_step2(
+        h13,
+        l13,
+        yh,
+        yl,
+        f64::reinterpret(e2[4]),
+        f64::reinterpret(e2[5]),
+        fk,
+    );
+    let (h15, l15) = exp_acc_step2(
+        h14,
+        l14,
+        yh,
+        yl,
+        f64::reinterpret(e2[2]),
+        f64::reinterpret(e2[3]),
+        fk,
+    );
+    let (h16, l16) = exp_acc_step2(
+        h15,
+        l15,
+        yh,
+        yl,
+        f64::reinterpret(e2[0]),
+        f64::reinterpret(e2[1]),
+        fk,
+    );
 
     (h16, l16, k)
 }
@@ -296,7 +359,14 @@ pub fn exp_accurate(xh: f64, xl: f64, #[comptime] fk: FmaKind) -> (f64, f64, i32
 
 /// One step of the asymptotic polynomial's double-double Horner fold.
 #[cube]
-pub fn asym_step(zh: f64, zl: f64, uh: f64, ul: f64, c: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
+pub fn asym_step(
+    zh: f64,
+    zl: f64,
+    uh: f64,
+    ul: f64,
+    c: f64,
+    #[comptime] fk: FmaKind,
+) -> (f64, f64) {
     let (h, l) = d_mul(zh, zl, uh, ul, fk);
     let (nh, nl) = fast_two_sum(c, h);
     (nh, nl + l)
@@ -497,18 +567,60 @@ pub fn erfc_asympt_accurate(x: f64, #[comptime] cfg: MathConfig) -> f64 {
         idx = idx - 1u32;
     }
 
-    let (a10h, a10l) =
-        acc_step2(zh, zl, uh, ul, f64::reinterpret(tab[base + 10]), f64::reinterpret(tab[base + 11]), fk);
-    let (a8h, a8l) =
-        acc_step2(a10h, a10l, uh, ul, f64::reinterpret(tab[base + 8]), f64::reinterpret(tab[base + 9]), fk);
-    let (a6h, a6l) =
-        acc_step2(a8h, a8l, uh, ul, f64::reinterpret(tab[base + 6]), f64::reinterpret(tab[base + 7]), fk);
-    let (a4h, a4l) =
-        acc_step2(a6h, a6l, uh, ul, f64::reinterpret(tab[base + 4]), f64::reinterpret(tab[base + 5]), fk);
-    let (a2h, a2l) =
-        acc_step2(a4h, a4l, uh, ul, f64::reinterpret(tab[base + 2]), f64::reinterpret(tab[base + 3]), fk);
-    let (a0h, a0l) =
-        acc_step2(a2h, a2l, uh, ul, f64::reinterpret(tab[base]), f64::reinterpret(tab[base + 1]), fk);
+    let (a10h, a10l) = acc_step2(
+        zh,
+        zl,
+        uh,
+        ul,
+        f64::reinterpret(tab[base + 10]),
+        f64::reinterpret(tab[base + 11]),
+        fk,
+    );
+    let (a8h, a8l) = acc_step2(
+        a10h,
+        a10l,
+        uh,
+        ul,
+        f64::reinterpret(tab[base + 8]),
+        f64::reinterpret(tab[base + 9]),
+        fk,
+    );
+    let (a6h, a6l) = acc_step2(
+        a8h,
+        a8l,
+        uh,
+        ul,
+        f64::reinterpret(tab[base + 6]),
+        f64::reinterpret(tab[base + 7]),
+        fk,
+    );
+    let (a4h, a4l) = acc_step2(
+        a6h,
+        a6l,
+        uh,
+        ul,
+        f64::reinterpret(tab[base + 4]),
+        f64::reinterpret(tab[base + 5]),
+        fk,
+    );
+    let (a2h, a2l) = acc_step2(
+        a4h,
+        a4l,
+        uh,
+        ul,
+        f64::reinterpret(tab[base + 2]),
+        f64::reinterpret(tab[base + 3]),
+        fk,
+    );
+    let (a0h, a0l) = acc_step2(
+        a2h,
+        a2l,
+        uh,
+        ul,
+        f64::reinterpret(tab[base]),
+        f64::reinterpret(tab[base + 1]),
+        fk,
+    );
 
     let (vh, vl0) = a_mul(a0h, yh, fk);
     let vl1 = fma64(a0h, yl, vl0, fk);

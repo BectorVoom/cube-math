@@ -14,8 +14,8 @@
 
 use cubecl::prelude::*;
 
-use crate::config::MathConfig;
 use crate::bits::{inf64, is_finite64};
+use crate::config::MathConfig;
 
 /// `2^-600`: the down-scale for the huge-`ax` branch.
 const SCALE: f64 = f64::from_bits(0x1a70000000000000);

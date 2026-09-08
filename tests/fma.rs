@@ -33,15 +33,17 @@ fn k32(a: &Array<f32>, b: &Array<f32>, c: &Array<f32>, out: &mut Array<f32>) {
 
 fn run64<R: Runtime>(client: &ComputeClient<R>, a: &[f64], b: &[f64], c: &[f64]) -> Vec<f64> {
     let n = a.len();
-    let ah = client.create(cubecl::bytes::Bytes::from_elems(a.to_vec()));
-    let bh = client.create(cubecl::bytes::Bytes::from_elems(b.to_vec()));
-    let ch = client.create(cubecl::bytes::Bytes::from_elems(c.to_vec()));
+    let ah = client.create_from_slice(f64::as_bytes(a));
+    let bh = client.create_from_slice(f64::as_bytes(b));
+    let ch = client.create_from_slice(f64::as_bytes(c));
     let oh = client.empty(n * 8);
+    let (count, dim) =
+        cube_math::launch::launch_1d(client, n, cube_math::launch::CpuShape::Vectorised);
     unsafe {
         k64::launch_unchecked::<R>(
             client,
-            CubeCount::Static(n.div_ceil(256) as u32, 1, 1),
-            CubeDim::new_1d(256),
+            count,
+            dim,
             ArrayArg::from_raw_parts(ah, n),
             ArrayArg::from_raw_parts(bh, n),
             ArrayArg::from_raw_parts(ch, n),
@@ -54,15 +56,17 @@ fn run64<R: Runtime>(client: &ComputeClient<R>, a: &[f64], b: &[f64], c: &[f64])
 
 fn run32<R: Runtime>(client: &ComputeClient<R>, a: &[f32], b: &[f32], c: &[f32]) -> Vec<f32> {
     let n = a.len();
-    let ah = client.create(cubecl::bytes::Bytes::from_elems(a.to_vec()));
-    let bh = client.create(cubecl::bytes::Bytes::from_elems(b.to_vec()));
-    let ch = client.create(cubecl::bytes::Bytes::from_elems(c.to_vec()));
+    let ah = client.create_from_slice(f32::as_bytes(a));
+    let bh = client.create_from_slice(f32::as_bytes(b));
+    let ch = client.create_from_slice(f32::as_bytes(c));
     let oh = client.empty(n * 4);
+    let (count, dim) =
+        cube_math::launch::launch_1d(client, n, cube_math::launch::CpuShape::Vectorised);
     unsafe {
         k32::launch_unchecked::<R>(
             client,
-            CubeCount::Static(n.div_ceil(256) as u32, 1, 1),
-            CubeDim::new_1d(256),
+            count,
+            dim,
             ArrayArg::from_raw_parts(ah, n),
             ArrayArg::from_raw_parts(bh, n),
             ArrayArg::from_raw_parts(ch, n),
@@ -196,7 +200,12 @@ fn check<R: Runtime>(backend: &str) {
             }
         }
     }
-    assert!(bad.is_empty(), "[{backend}] {count} of {} triples differ\n{}", a.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "[{backend}] {count} of {} triples differ\n{}",
+        a.len(),
+        bad.join("\n")
+    );
 
     // Single precision, on random bit patterns and the specials.
     let mut rng = Rng(0x0f0f_0f0f_f0f0_f0f0);
@@ -245,7 +254,11 @@ fn check<R: Runtime>(backend: &str) {
             ));
         }
     }
-    assert!(bad32.is_empty(), "[{backend}] single precision\n{}", bad32.join("\n"));
+    assert!(
+        bad32.is_empty(),
+        "[{backend}] single precision\n{}",
+        bad32.join("\n")
+    );
 }
 
 #[cfg(feature = "cpu")]

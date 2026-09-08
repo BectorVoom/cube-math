@@ -235,7 +235,10 @@ pub fn tanh(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
             }
         }
     } else {
-        out = copysign(fast_tanh(a, comptime!(cfg.checked()), comptime!(cfg.fma())), x);
+        out = copysign(
+            fast_tanh(a, comptime!(cfg.checked()), comptime!(cfg.fma())),
+            x,
+        );
     }
     out
 }
@@ -281,7 +284,11 @@ pub fn atanh(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
         // what the reference gives, while the folded form's is enormous and
         // positive. Everything either form saves is smaller than that gap.
         out = 0.5
-            * log1p::fast(2.0 * x / (1.0 - x), comptime!(cfg.checked()), comptime!(cfg.fma()));
+            * log1p::fast(
+                2.0 * x / (1.0 - x),
+                comptime!(cfg.checked()),
+                comptime!(cfg.fma()),
+            );
         if f64::abs(x) < ATANH_TINY {
             out = x;
         }

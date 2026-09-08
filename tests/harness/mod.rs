@@ -16,7 +16,7 @@ pub fn upload<R: Runtime, E: CubeElement>(
     xs: &[E],
     dtype: cubecl::prelude::StorageType,
 ) -> TensorHandle<R> {
-    let handle = client.create(cubecl::bytes::Bytes::from_elems(xs.to_vec()));
+    let handle = client.create_from_slice(E::as_bytes(xs));
     TensorHandle::new_contiguous(vec![xs.len()], handle, dtype)
 }
 
@@ -52,7 +52,11 @@ pub fn eval1<R: Runtime, E: CubeElement + Clone>(
     let out = output.handle.clone();
     cube_math::launch::unary(client, op, input.binding(), output.binding(), dtype, cfg)
         .expect("launch failed");
-    download(client, TensorHandle::new_contiguous(vec![xs.len()], out, dtype), xs.len())
+    download(
+        client,
+        TensorHandle::new_contiguous(vec![xs.len()], out, dtype),
+        xs.len(),
+    )
 }
 
 /// Evaluate a two-argument op over two slices.
@@ -68,9 +72,21 @@ pub fn eval2<R: Runtime, E: CubeElement + Clone>(
     let bh = upload(client, b, dtype);
     let output = empty(client, a.len(), dtype);
     let out = output.handle.clone();
-    cube_math::launch::binary(client, op, ah.binding(), bh.binding(), output.binding(), dtype, cfg)
-        .expect("launch failed");
-    download(client, TensorHandle::new_contiguous(vec![a.len()], out, dtype), a.len())
+    cube_math::launch::binary(
+        client,
+        op,
+        ah.binding(),
+        bh.binding(),
+        output.binding(),
+        dtype,
+        cfg,
+    )
+    .expect("launch failed");
+    download(
+        client,
+        TensorHandle::new_contiguous(vec![a.len()], out, dtype),
+        a.len(),
+    )
 }
 
 /// Evaluate a one-argument, two-output op over a slice.
@@ -86,12 +102,26 @@ pub fn eval1_pair<R: Runtime, E: CubeElement + Clone>(
     let o2 = empty(client, xs.len(), dtype);
     let (h1, h2) = (o1.handle.clone(), o2.handle.clone());
     cube_math::launch::unary_pair(
-        client, op, input.binding(), o1.binding(), o2.binding(), dtype, cfg,
+        client,
+        op,
+        input.binding(),
+        o1.binding(),
+        o2.binding(),
+        dtype,
+        cfg,
     )
     .expect("launch failed");
     (
-        download(client, TensorHandle::new_contiguous(vec![xs.len()], h1, dtype), xs.len()),
-        download(client, TensorHandle::new_contiguous(vec![xs.len()], h2, dtype), xs.len()),
+        download(
+            client,
+            TensorHandle::new_contiguous(vec![xs.len()], h1, dtype),
+            xs.len(),
+        ),
+        download(
+            client,
+            TensorHandle::new_contiguous(vec![xs.len()], h2, dtype),
+            xs.len(),
+        ),
     )
 }
 
@@ -110,12 +140,27 @@ pub fn eval2_pair<R: Runtime, E: CubeElement + Clone>(
     let o2 = empty(client, a.len(), dtype);
     let (h1, h2) = (o1.handle.clone(), o2.handle.clone());
     cube_math::launch::binary_pair(
-        client, op, ah.binding(), bh.binding(), o1.binding(), o2.binding(), dtype, cfg,
+        client,
+        op,
+        ah.binding(),
+        bh.binding(),
+        o1.binding(),
+        o2.binding(),
+        dtype,
+        cfg,
     )
     .expect("launch failed");
     (
-        download(client, TensorHandle::new_contiguous(vec![a.len()], h1, dtype), a.len()),
-        download(client, TensorHandle::new_contiguous(vec![a.len()], h2, dtype), a.len()),
+        download(
+            client,
+            TensorHandle::new_contiguous(vec![a.len()], h1, dtype),
+            a.len(),
+        ),
+        download(
+            client,
+            TensorHandle::new_contiguous(vec![a.len()], h2, dtype),
+            a.len(),
+        ),
     )
 }
 
@@ -249,7 +294,10 @@ pub fn sweep_order_f64() -> (Vec<f64>, Vec<f64>) {
 
 /// The single-precision counterpart of [`sweep_order_f64`].
 pub fn sweep_order_f32() -> (Vec<f32>, Vec<f32>) {
-    let orders: Vec<f32> = (-40i32..=40).chain([100, -100, 200]).map(|n| n as f32).collect();
+    let orders: Vec<f32> = (-40i32..=40)
+        .chain([100, -100, 200])
+        .map(|n| n as f32)
+        .collect();
     let mut args: Vec<f32> = vec![
         0.0,
         -0.0,
@@ -333,7 +381,11 @@ pub fn next_up(x: f64) -> f64 {
     if x == 0.0 {
         return f64::from_bits(1);
     }
-    if x > 0.0 { f64::from_bits(x.to_bits() + 1) } else { f64::from_bits(x.to_bits() - 1) }
+    if x > 0.0 {
+        f64::from_bits(x.to_bits() + 1)
+    } else {
+        f64::from_bits(x.to_bits() - 1)
+    }
 }
 
 /// The next representable value below `x`.
@@ -435,7 +487,11 @@ pub fn check<E: Elem>(
     xs: &[E],
 ) {
     let got = device(xs);
-    assert_eq!(got.len(), xs.len(), "[{backend}] {name}: wrong output length");
+    assert_eq!(
+        got.len(),
+        xs.len(),
+        "[{backend}] {name}: wrong output length"
+    );
     let (mut bad, mut count) = (Vec::new(), 0usize);
     for (x, &g) in xs.iter().zip(got.iter()) {
         let want = reference(*x);
@@ -640,14 +696,20 @@ pub fn check_ulp<E: Elem>(
         }
         let u = g.ulps_from(want);
         if u.is_nan() && bad.len() < 8 {
-            bad.push(format!("  x = {x:e}: got {g:e}, want {want:e} (not comparable)"));
+            bad.push(format!(
+                "  x = {x:e}: got {g:e}, want {want:e} (not comparable)"
+            ));
         }
         if u > worst {
             worst = u;
             at = Some(*x);
         }
     }
-    assert!(bad.is_empty(), "[{backend}] {name}: specials differ\n{}", bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "[{backend}] {name}: specials differ\n{}",
+        bad.join("\n")
+    );
     assert!(
         worst <= limit,
         "[{backend}] {name}: {worst:.3} ulp at x = {}, budget {limit}",
@@ -668,7 +730,12 @@ pub fn sweep2_f64() -> (Vec<f64>, Vec<f64>) {
 
 /// The single-precision counterpart of [`sweep2_f64`].
 pub fn sweep2_f32() -> (Vec<f32>, Vec<f32>) {
-    cross(&sweep2_base_f64().iter().map(|&x| x as f32).collect::<Vec<_>>())
+    cross(
+        &sweep2_base_f64()
+            .iter()
+            .map(|&x| x as f32)
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn sweep2_base_f64() -> Vec<f64> {
@@ -695,7 +762,9 @@ fn sweep2_base_f64() -> Vec<f64> {
         std::f64::consts::PI,
         std::f64::consts::E,
     ];
-    for e in [-140i32, -130, -126, -125, -60, -23, -1, 0, 1, 23, 60, 126, 127] {
+    for e in [
+        -140i32, -130, -126, -125, -60, -23, -1, 0, 1, 23, 60, 126, 127,
+    ] {
         let v = (2.0f64).powi(e);
         base.push(v);
         base.push(-v);

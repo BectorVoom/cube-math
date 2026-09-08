@@ -117,7 +117,12 @@ pub fn horner(s: f64, base: u32, n: u32, #[comptime] fk: FmaKind) -> f64 {
     let mut j = n - 1u32;
     while j > 0u32 {
         j = j - 1u32;
-        acc = fma64(acc, s, f64::reinterpret(tab[usize::cast_from(base + j)]), fk);
+        acc = fma64(
+            acc,
+            s,
+            f64::reinterpret(tab[usize::cast_from(base + j)]),
+            fk,
+        );
     }
     acc
 }

@@ -14,6 +14,7 @@
 //! Note what the kernel signature does *not* contain: any table, buffer or
 //! context belonging to `cube-math`. The math functions are functions.
 
+use cube_math::launch::CpuShape;
 use cube_math::{MathConfig, double as m, fidelity};
 use cubecl::prelude::*;
 
@@ -57,13 +58,22 @@ fn run<R: Runtime>(name: &str) {
     let (mu, sigma) = (0.5f64, 2.0f64);
     let xs: Vec<f64> = (0..n).map(|i| -8.0 + 16.0 * i as f64 / n as f64).collect();
 
-    let inp = client.create(cubecl::bytes::Bytes::from_elems(xs.clone()));
+    // `create_from_slice` reads the host slice straight into the device
+    // buffer. `Bytes::from_elems` wants an owned `Vec` instead, so a slice has
+    // to be cloned onto the heap to be handed over and the copy dropped again
+    // the moment the transfer is done.
+    let inp = client.create_from_slice(f64::as_bytes(&xs));
     let out = client.empty(n * size_of::<f64>());
+    // `ln` and `exp` are both straight-line here, so on the CPU runtime this
+    // body is one LLVM will vectorise and the geometry should leave it alone —
+    // see `CpuShape`. On a GPU the parameter is ignored and the workgroup
+    // comes from the hardware's plane size.
+    let (count, dim) = cube_math::launch::launch_1d(&client, n, CpuShape::Vectorised);
     unsafe {
         gaussian_logpdf::launch_unchecked::<R>(
             &client,
-            CubeCount::Static(n.div_ceil(256) as u32, 1, 1),
-            CubeDim::new_1d(256),
+            count,
+            dim,
             ArrayArg::from_raw_parts(inp, n),
             ArrayArg::from_raw_parts(out.clone(), n),
             mu,

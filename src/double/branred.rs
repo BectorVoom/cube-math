@@ -172,8 +172,8 @@ pub fn branred(x0: f64) -> (f64, f64, u32) {
     let t1 = bs - (bs - s);
     let t2 = s - t1;
     let bh = s * t::HP0;
-    let bl = (((t1 * t::MP1 - bh) + t1 * MP2) + t2 * t::MP1)
-        + (t2 * MP2 + s * t::HP1 + tt * t::HP0);
+    let bl =
+        (((t1 * t::MP1 - bh) + t1 * MP2) + t2 * t::MP1) + (t2 * MP2 + s * t::HP1 + tt * t::HP0);
     let a = bh + bl;
     let aa = (bh - a) + bl;
 

@@ -17,8 +17,8 @@ use cube_math::launch::{F32, F64};
 use cube_math::prelude::*;
 use cubecl::prelude::*;
 use harness::{
-    check, check2, check2_pair, check_mixed, check_pair, check_ulp, eval1, eval1_pair, eval2, eval2_pair,
-    sweep2_f32, sweep2_f64, sweep_f32, sweep_f64, sweep_order_f32, sweep_order_f64,
+    check, check_mixed, check_pair, check_ulp, check2, check2_pair, eval1, eval1_pair, eval2,
+    eval2_pair, sweep_f32, sweep_f64, sweep_order_f32, sweep_order_f64, sweep2_f32, sweep2_f64,
 };
 use rmath::prelude::*;
 
@@ -494,7 +494,11 @@ fn suite_f32<R: Runtime>(backend: &'static str, client: &ComputeClient<R>, fid: 
 fn run<R: Runtime>(backend: &'static str, device: &R::Device) {
     let client = R::client(device);
     let fid = fidelity(&client);
-    eprintln!("[{backend}] f64: {} | f32: {}", fid.f64.summary(), fid.f32.summary());
+    eprintln!(
+        "[{backend}] f64: {} | f32: {}",
+        fid.f64.summary(),
+        fid.f32.summary()
+    );
     suite_f64(backend, &client, fid);
     suite_f32(backend, &client, fid);
 }

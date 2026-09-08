@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use crate::config::MathConfig;
 use crate::error::MathError;
 use crate::launch::unary::arg;
-use crate::launch::{F32, F64, geometry, same_len};
+use crate::launch::{CpuShape, F32, F64, launch_1d, same_len};
 use crate::{double as d, single as s};
 
 /// The two-argument functions.
@@ -67,6 +67,35 @@ impl Binary {
     pub const fn has_f32(self) -> bool {
         true
     }
+
+    /// What the CPU runtime makes of this one. See [`crate::launch::Unary::cpu_shape`].
+    pub(crate) const fn cpu_shape(self) -> CpuShape {
+        match self {
+            Self::Hypot
+            | Self::CopySign
+            | Self::Fdim
+            | Self::Fmax
+            | Self::Fmin
+            | Self::Ldexp
+            | Self::Scalbn
+            | Self::NextAfter => CpuShape::Vectorised,
+            // `fmod` and `remainder` share a reduction loop that runs once per
+            // bit of the exponent difference, so how branchy they are is a
+            // property of the data: on operands a few octaves apart the loop
+            // is short, and on the benchmark's own range (1e-6..1e6 against
+            // -8..8) it is long and wildly uneven. Threads win on both — 130
+            // against 64 Melem/s on the wide range, 530 against 343 on the
+            // narrow one — so the data does not have to be guessed at.
+            //
+            // `atan2` is the one genuine coin toss in this table: it measures
+            // 466 against 332 Melem/s on one range and 372 against 456 on
+            // another. It is here because two of the three ranges tried
+            // preferred it.
+            Self::Pow | Self::Atan2 | Self::Jn | Self::Yn | Self::Fmod | Self::Remainder => {
+                CpuShape::Threaded
+            }
+        }
+    }
 }
 
 /// The two-argument functions that return two values.
@@ -83,10 +112,25 @@ impl BinaryPair {
             Self::Remquo => "remquo",
         }
     }
+
+    /// What the CPU runtime makes of this one. See
+    /// [`crate::launch::Unary::cpu_shape`].
+    pub(crate) const fn cpu_shape(self) -> CpuShape {
+        match self {
+            // `remainder`'s reduction loop, and the quotient bits besides.
+            Self::Remquo => CpuShape::Threaded,
+        }
+    }
 }
 
 #[cube(launch_unchecked)]
-fn kernel_f64(a: &Array<f64>, b: &Array<f64>, out: &mut Array<f64>, #[comptime] op: Binary, #[comptime] cfg: MathConfig) {
+fn kernel_f64(
+    a: &Array<f64>,
+    b: &Array<f64>,
+    out: &mut Array<f64>,
+    #[comptime] op: Binary,
+    #[comptime] cfg: MathConfig,
+) {
     if ABSOLUTE_POS < out.len() {
         let x = a[ABSOLUTE_POS];
         let y = b[ABSOLUTE_POS];
@@ -110,7 +154,13 @@ fn kernel_f64(a: &Array<f64>, b: &Array<f64>, out: &mut Array<f64>, #[comptime] 
 }
 
 #[cube(launch_unchecked)]
-fn kernel_f32(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>, #[comptime] op: Binary, #[comptime] cfg: MathConfig) {
+fn kernel_f32(
+    a: &Array<f32>,
+    b: &Array<f32>,
+    out: &mut Array<f32>,
+    #[comptime] op: Binary,
+    #[comptime] cfg: MathConfig,
+) {
     if ABSOLUTE_POS < out.len() {
         let x = a[ABSOLUTE_POS];
         let y = b[ABSOLUTE_POS];
@@ -134,7 +184,14 @@ fn kernel_f32(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>, #[comptime] 
 }
 
 #[cube(launch_unchecked)]
-fn kernel_pair_f64(a: &Array<f64>, b: &Array<f64>, o1: &mut Array<f64>, o2: &mut Array<f64>, #[comptime] op: BinaryPair, #[comptime] cfg: MathConfig) {
+fn kernel_pair_f64(
+    a: &Array<f64>,
+    b: &Array<f64>,
+    o1: &mut Array<f64>,
+    o2: &mut Array<f64>,
+    #[comptime] op: BinaryPair,
+    #[comptime] cfg: MathConfig,
+) {
     if ABSOLUTE_POS < o1.len() {
         let (p, q) = match op {
             BinaryPair::Remquo => d::exact::remquo(a[ABSOLUTE_POS], b[ABSOLUTE_POS], cfg),
@@ -145,7 +202,14 @@ fn kernel_pair_f64(a: &Array<f64>, b: &Array<f64>, o1: &mut Array<f64>, o2: &mut
 }
 
 #[cube(launch_unchecked)]
-fn kernel_pair_f32(a: &Array<f32>, b: &Array<f32>, o1: &mut Array<f32>, o2: &mut Array<f32>, #[comptime] op: BinaryPair, #[comptime] cfg: MathConfig) {
+fn kernel_pair_f32(
+    a: &Array<f32>,
+    b: &Array<f32>,
+    o1: &mut Array<f32>,
+    o2: &mut Array<f32>,
+    #[comptime] op: BinaryPair,
+    #[comptime] cfg: MathConfig,
+) {
     if ABSOLUTE_POS < o1.len() {
         let (p, q) = match op {
             BinaryPair::Remquo => s::exact::remquo(a[ABSOLUTE_POS], b[ABSOLUTE_POS], cfg),
@@ -168,21 +232,38 @@ pub fn binary<R: Runtime>(
     let n = a.size();
     same_len(n, b.size())?;
     same_len(n, output.size())?;
-    let (count, dim) = geometry(n);
+    let (count, dim) = launch_1d(client, n, op.cpu_shape());
     let (ah, bh, oh) = (a.handle, b.handle, output.handle);
     match dtype {
         s if s == F64 => unsafe {
             kernel_f64::launch_unchecked::<R>(
-                client, count, dim, arg(ah, n), arg(bh, n), arg(oh, n), op, config,
+                client,
+                count,
+                dim,
+                arg(ah, n),
+                arg(bh, n),
+                arg(oh, n),
+                op,
+                config,
             )
         },
         s if s == F32 => {
             if !op.has_f32() {
-                return Err(MathError::UnsupportedOp { op: op.name(), dtype });
+                return Err(MathError::UnsupportedOp {
+                    op: op.name(),
+                    dtype,
+                });
             }
             unsafe {
                 kernel_f32::launch_unchecked::<R>(
-                    client, count, dim, arg(ah, n), arg(bh, n), arg(oh, n), op, config,
+                    client,
+                    count,
+                    dim,
+                    arg(ah, n),
+                    arg(bh, n),
+                    arg(oh, n),
+                    op,
+                    config,
                 )
             }
         }
@@ -207,17 +288,33 @@ pub fn binary_pair<R: Runtime>(
     same_len(n, b.size())?;
     same_len(n, out1.size())?;
     same_len(n, out2.size())?;
-    let (count, dim) = geometry(n);
+    let (count, dim) = launch_1d(client, n, op.cpu_shape());
     let (ah, bh, o1, o2) = (a.handle, b.handle, out1.handle, out2.handle);
     match dtype {
         s if s == F64 => unsafe {
             kernel_pair_f64::launch_unchecked::<R>(
-                client, count, dim, arg(ah, n), arg(bh, n), arg(o1, n), arg(o2, n), op, config,
+                client,
+                count,
+                dim,
+                arg(ah, n),
+                arg(bh, n),
+                arg(o1, n),
+                arg(o2, n),
+                op,
+                config,
             )
         },
         s if s == F32 => unsafe {
             kernel_pair_f32::launch_unchecked::<R>(
-                client, count, dim, arg(ah, n), arg(bh, n), arg(o1, n), arg(o2, n), op, config,
+                client,
+                count,
+                dim,
+                arg(ah, n),
+                arg(bh, n),
+                arg(o1, n),
+                arg(o2, n),
+                op,
+                config,
             )
         },
         other => return Err(MathError::UnsupportedDtype(other)),

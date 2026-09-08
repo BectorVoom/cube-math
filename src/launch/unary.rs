@@ -5,7 +5,7 @@ use cubecl::server::Binding;
 
 use crate::config::MathConfig;
 use crate::error::MathError;
-use crate::launch::{F32, F64, geometry, same_len};
+use crate::launch::{CpuShape, F32, F64, launch_1d, same_len};
 use crate::{double as d, single as s};
 
 /// The one-argument functions.
@@ -149,6 +149,63 @@ impl Unary {
     pub const fn has_f32(self) -> bool {
         true
     }
+
+    /// What the CPU runtime makes of this one. See [`crate::launch::CpuShape`]
+    /// for the mechanism and the measurements; the split below is the measured
+    /// one, taken at 262144 `f64` elements on sixteen logical cores.
+    ///
+    /// Note where it does *not* fall. `erf` and `atan` cost about the same and
+    /// sit on opposite sides; so do `cbrt` and `sqrt`. What separates them is
+    /// branches, not work.
+    pub(crate) const fn cpu_shape(self) -> CpuShape {
+        match self {
+            // Table, polynomial, or pure bit manipulation.
+            Self::Exp
+            | Self::Exp2
+            | Self::Exp10
+            | Self::Expm1
+            | Self::Ln
+            | Self::Log2
+            | Self::Log10
+            | Self::Asin
+            | Self::Acos
+            | Self::Atan
+            | Self::Cosh
+            | Self::Atanh
+            | Self::Sqrt
+            | Self::Abs
+            | Self::Floor
+            | Self::Ceil
+            | Self::Trunc
+            | Self::Round
+            | Self::Rint
+            | Self::Ilogb => CpuShape::Vectorised,
+            // Cased argument reduction, a classification tree, or a loop.
+            // `sin`, `cos` and `tan` are here for the last of those: their
+            // Payne-Hanek reduction is unbounded, and it is what any argument
+            // large enough to need it runs into. On a narrow domain they would
+            // rather be above — but that costs 15% when the guess is wrong,
+            // where guessing the other way costs 2.2x (267 against 610 Melem/s
+            // over -700..700).
+            Self::Sin
+            | Self::Cos
+            | Self::Tan
+            | Self::Log1p
+            | Self::Cbrt
+            | Self::Sinh
+            | Self::Tanh
+            | Self::Acosh
+            | Self::Asinh
+            | Self::Erf
+            | Self::Erfc
+            | Self::J0
+            | Self::J1
+            | Self::Y0
+            | Self::Y1
+            | Self::LGamma
+            | Self::TGamma => CpuShape::Threaded,
+        }
+    }
 }
 
 /// The one-argument functions that return two values.
@@ -179,10 +236,23 @@ impl UnaryPair {
     pub const fn has_f32(self) -> bool {
         true
     }
+
+    /// What the CPU runtime makes of this one. See [`Unary::cpu_shape`].
+    pub(crate) const fn cpu_shape(self) -> CpuShape {
+        match self {
+            Self::Frexp | Self::Modf => CpuShape::Vectorised,
+            Self::SinCos | Self::LGammaR => CpuShape::Threaded,
+        }
+    }
 }
 
 #[cube(launch_unchecked)]
-fn kernel_f64(input: &Array<f64>, output: &mut Array<f64>, #[comptime] op: Unary, #[comptime] cfg: MathConfig) {
+fn kernel_f64(
+    input: &Array<f64>,
+    output: &mut Array<f64>,
+    #[comptime] op: Unary,
+    #[comptime] cfg: MathConfig,
+) {
     if ABSOLUTE_POS < input.len() {
         let x = input[ABSOLUTE_POS];
         output[ABSOLUTE_POS] = match op {
@@ -228,7 +298,12 @@ fn kernel_f64(input: &Array<f64>, output: &mut Array<f64>, #[comptime] op: Unary
 }
 
 #[cube(launch_unchecked)]
-fn kernel_f32(input: &Array<f32>, output: &mut Array<f32>, #[comptime] op: Unary, #[comptime] cfg: MathConfig) {
+fn kernel_f32(
+    input: &Array<f32>,
+    output: &mut Array<f32>,
+    #[comptime] op: Unary,
+    #[comptime] cfg: MathConfig,
+) {
     if ABSOLUTE_POS < input.len() {
         let x = input[ABSOLUTE_POS];
         output[ABSOLUTE_POS] = match op {
@@ -274,7 +349,13 @@ fn kernel_f32(input: &Array<f32>, output: &mut Array<f32>, #[comptime] op: Unary
 }
 
 #[cube(launch_unchecked)]
-fn kernel_pair_f64(input: &Array<f64>, o1: &mut Array<f64>, o2: &mut Array<f64>, #[comptime] op: UnaryPair, #[comptime] cfg: MathConfig) {
+fn kernel_pair_f64(
+    input: &Array<f64>,
+    o1: &mut Array<f64>,
+    o2: &mut Array<f64>,
+    #[comptime] op: UnaryPair,
+    #[comptime] cfg: MathConfig,
+) {
     if ABSOLUTE_POS < input.len() {
         let x = input[ABSOLUTE_POS];
         let (a, b) = match op {
@@ -289,7 +370,13 @@ fn kernel_pair_f64(input: &Array<f64>, o1: &mut Array<f64>, o2: &mut Array<f64>,
 }
 
 #[cube(launch_unchecked)]
-fn kernel_pair_f32(input: &Array<f32>, o1: &mut Array<f32>, o2: &mut Array<f32>, #[comptime] op: UnaryPair, #[comptime] cfg: MathConfig) {
+fn kernel_pair_f32(
+    input: &Array<f32>,
+    o1: &mut Array<f32>,
+    o2: &mut Array<f32>,
+    #[comptime] op: UnaryPair,
+    #[comptime] cfg: MathConfig,
+) {
     if ABSOLUTE_POS < input.len() {
         let x = input[ABSOLUTE_POS];
         let (a, b) = match op {
@@ -317,7 +404,7 @@ pub fn unary<R: Runtime>(
 ) -> Result<(), MathError> {
     let n = input.size();
     same_len(n, output.size())?;
-    let (count, dim) = geometry(n);
+    let (count, dim) = launch_1d(client, n, op.cpu_shape());
     let (a, b) = (input.handle, output.handle);
     match dtype {
         s if s == F64 => unsafe {
@@ -325,10 +412,21 @@ pub fn unary<R: Runtime>(
         },
         s if s == F32 => {
             if !op.has_f32() {
-                return Err(MathError::UnsupportedOp { op: op.name(), dtype });
+                return Err(MathError::UnsupportedOp {
+                    op: op.name(),
+                    dtype,
+                });
             }
             unsafe {
-                kernel_f32::launch_unchecked::<R>(client, count, dim, arg(a, n), arg(b, n), op, config)
+                kernel_f32::launch_unchecked::<R>(
+                    client,
+                    count,
+                    dim,
+                    arg(a, n),
+                    arg(b, n),
+                    op,
+                    config,
+                )
             }
         }
         other => return Err(MathError::UnsupportedDtype(other)),
@@ -349,21 +447,38 @@ pub fn unary_pair<R: Runtime>(
     let n = input.size();
     same_len(n, out1.size())?;
     same_len(n, out2.size())?;
-    let (count, dim) = geometry(n);
+    let (count, dim) = launch_1d(client, n, op.cpu_shape());
     let (a, b, c) = (input.handle, out1.handle, out2.handle);
     match dtype {
         s if s == F64 => unsafe {
             kernel_pair_f64::launch_unchecked::<R>(
-                client, count, dim, arg(a, n), arg(b, n), arg(c, n), op, config,
+                client,
+                count,
+                dim,
+                arg(a, n),
+                arg(b, n),
+                arg(c, n),
+                op,
+                config,
             )
         },
         s if s == F32 => {
             if !op.has_f32() {
-                return Err(MathError::UnsupportedOp { op: op.name(), dtype });
+                return Err(MathError::UnsupportedOp {
+                    op: op.name(),
+                    dtype,
+                });
             }
             unsafe {
                 kernel_pair_f32::launch_unchecked::<R>(
-                    client, count, dim, arg(a, n), arg(b, n), arg(c, n), op, config,
+                    client,
+                    count,
+                    dim,
+                    arg(a, n),
+                    arg(b, n),
+                    arg(c, n),
+                    op,
+                    config,
                 )
             }
         }

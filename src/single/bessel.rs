@@ -202,7 +202,10 @@ pub fn reduce_large(xi0: u32) -> (f64, i32) {
 
     let n = (res0 + (1u64 << 61u64)) >> 62u64;
     let rem = res0 - (n << 62u64);
-    (f64::cast_from(i64::reinterpret(rem)) * PI63, i32::cast_from(n))
+    (
+        f64::cast_from(i64::reinterpret(rem)) * PI63,
+        i32::cast_from(n),
+    )
 }
 
 /// `(h, n)` with `x - pi/4 - alpha = h + n pi/2` modulo `2 pi`.
@@ -559,11 +562,7 @@ pub fn y0(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
                     // row.
                     let tabz = besself_zeros_tab();
                     let y = x - at(&tabz, (ZN + index) * ZW + 1u32);
-                    let extra = select(
-                        index > 0u32,
-                        0.0,
-                        y * (Y0_EXTRA4 + y * Y0_EXTRA5),
-                    );
+                    let extra = select(index > 0u32, 0.0, y * (Y0_EXTRA4 + y * Y0_EXTRA5));
                     let (v, applies) = near_root(x, 1u32, index, extra);
                     out = select(applies, v, z);
                 }
@@ -626,8 +625,7 @@ pub fn j1(x0: f32, #[comptime] cfg: MathConfig) -> f32 {
                     if tabulated {
                         let tabz = besself_zeros_tab();
                         let yy = y - at(&tabz, (2u32 * ZN + index) * ZW + 1u32);
-                        let extra =
-                            select(index > 0u32, 0.0, yy * J1_EXTRA4);
+                        let extra = select(index > 0u32, 0.0, yy * J1_EXTRA4);
                         let (v, applies) = near_root(y, 2u32, index, extra);
                         out = select(applies, sign * v, z);
                     }
@@ -887,8 +885,7 @@ pub fn yn(nf: f32, x0: f32, #[comptime] cfg: MathConfig) -> f32 {
             // while `jnf` multiplies `b` by the ratio. In `double` the two
             // round the same way, but this is transcribed rather than tidied.
             b = f32::cast_from(
-                (f64::cast_from(i + i) / f64::cast_from(x)) * f64::cast_from(b)
-                    - f64::cast_from(a),
+                (f64::cast_from(i + i) / f64::cast_from(x)) * f64::cast_from(b) - f64::cast_from(a),
             );
             ib = u32::reinterpret(b);
             a = temp;

@@ -52,7 +52,11 @@ const P_M60: f64 = f64::from_bits(0x3c30000000000000);
 /// `+-2^-k` selectors, indexed by `(it << 1) | sign`.
 #[cube]
 pub fn rsc(idx: u32) -> f64 {
-    let mag = select(idx >> 1u32 == 0u32, 1.0, select(idx >> 1u32 == 1u32, 0.5, 0.25));
+    let mag = select(
+        idx >> 1u32 == 0u32,
+        1.0,
+        select(idx >> 1u32 == 1u32, 0.5, 0.25),
+    );
     select(idx & 1u32 == 1u32, -mag, mag)
 }
 
@@ -177,5 +181,9 @@ pub fn cbrt(x: f64, #[comptime] _cfg: MathConfig) -> f64 {
 #[cube]
 pub fn copysign(x: f64, y: f64) -> f64 {
     let a = f64::abs(x);
-    select(u64::reinterpret(y) & 0x8000_0000_0000_0000u64 != 0u64, -a, a)
+    select(
+        u64::reinterpret(y) & 0x8000_0000_0000_0000u64 != 0u64,
+        -a,
+        a,
+    )
 }
