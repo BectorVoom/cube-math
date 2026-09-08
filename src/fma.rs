@@ -71,6 +71,32 @@ pub fn fma64(a: f64, b: f64, c: f64, #[comptime] kind: FmaKind) -> f64 {
     }
 }
 
+/// `a * b + c` on N `f64` elements at once, each with one rounding — the
+/// vector twin of [`fma64()`].
+///
+/// [`FmaKind::Hardware`] is the intrinsic on the whole vector (one fused
+/// operation per element on every backend that fuses at all);
+/// [`FmaKind::Software`] replays [`fma_f64()`] per element, because the
+/// emulation branches per operand and a vector cannot.
+#[cube]
+pub fn fma64_vec<N: Size>(
+    a: Vector<f64, N>,
+    b: Vector<f64, N>,
+    c: Vector<f64, N>,
+    #[comptime] kind: FmaKind,
+) -> Vector<f64, N> {
+    if comptime!(matches!(kind, FmaKind::Hardware)) {
+        fma(a, b, c)
+    } else {
+        let mut out = Vector::<f64, N>::empty();
+        #[unroll]
+        for j in 0..N::value() {
+            out[j] = fma_f64(a[j], b[j], c[j]);
+        }
+        out
+    }
+}
+
 /// `a * b + c` for `f32`, with one rounding.
 #[cube]
 pub fn fma32(a: f32, b: f32, c: f32, #[comptime] kind: FmaKind) -> f32 {

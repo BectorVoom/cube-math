@@ -14,12 +14,31 @@
 //! [`crate::Domain::Finite`] means `|x| < 512`. Outside that the answer is
 //! wrong, not merely imprecise — and note `exp` overflows at 709.78, so the
 //! safe range is set by the reduction, not by the function's own domain.
+//!
+//! # The vector entry point
+//!
+//! [`exp_vec()`] evaluates N elements at once and is bit-identical to [`exp()`]
+//! on each of them. The main path is the scalar schedule written on
+//! `Vector<f64, N>` — every operation elementwise, the fused multiply-adds
+//! through [`fma64_vec()`], the table gather one element at a time — and the
+//! elements the scalar routine would send down another branch (`|x| < 2^-54`,
+//! `|x| >= 512`, non-finite) are repaired afterwards by [`bit_exact()`] on
+//! that element alone. IEEE-754 arithmetic rounds identically whether the
+//! operand sits in a scalar or in a lane, so the main-path elements are the
+//! scalar routine's bits by construction; the repaired ones are the scalar
+//! routine, full stop. `tests/vector_exp.rs` holds the two to `to_bits()`
+//! equality at every width the CPU runtime offers.
+//!
+//! Why it exists: a kernel that already holds N points in a vector (a grid
+//! collocation, say) would otherwise extract each element, call the scalar
+//! routine and insert the result — N dependent chains where one vectorised
+//! chain will do.
 
 use cubecl::prelude::*;
 
-use crate::config::MathConfig;
 use crate::bits::inf64;
-use crate::fma::{FmaKind, fma64};
+use crate::config::MathConfig;
+use crate::fma::{FmaKind, fma64, fma64_vec};
 use crate::tables::consts::exp_tab;
 use crate::tables::double::exp as t;
 
@@ -224,3 +243,146 @@ const F8: f64 = 1.0 / 3628800.0;
 const F9: f64 = 1.0 / 39916800.0;
 const F10: f64 = 1.0 / 479001600.0;
 const F11: f64 = 1.0 / 6227020800.0;
+
+/// `e^x` on N elements at once, bit-identical per element to [`exp()`].
+/// See the module doc.
+#[cube]
+pub fn exp_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
+    if comptime!(cfg.bit_exact()) {
+        bit_exact_vec::<N>(x, comptime!(cfg.fma()))
+    } else {
+        fast_vec::<N>(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
+    }
+}
+
+/// [`bit_exact()`] on N elements: the main path on the whole vector, the
+/// other branches replayed per element.
+#[cube]
+pub fn bit_exact_vec<N: Size>(x: Vector<f64, N>, #[comptime] fk: FmaKind) -> Vector<f64, N> {
+    let (tmp, sbits, _ki) = core_vec::<N>(x, fk);
+    let scale = Vector::<f64, N>::reinterpret(sbits);
+    let mut out = fma64_vec::<N>(scale, tmp, scale, fk);
+    // The elements outside `0x3c9 <= abstop < 0x408` — tiny, huge, non-finite
+    // — take the scalar routine, whose answer is the contract.
+    #[unroll]
+    for j in 0..N::value() {
+        let xj = x[j];
+        let abstop = u32::cast_from(u64::reinterpret(xj) >> 52u64) & 0x7ffu32;
+        if abstop < 0x3c9u32 || abstop >= 0x408u32 {
+            out[j] = bit_exact(xj, fk);
+        }
+    }
+    out
+}
+
+/// [`core()`] on N elements: the same operations in the same order, per
+/// element; only the table gather is per element by necessity.
+#[cube]
+pub fn core_vec<N: Size>(
+    x: Vector<f64, N>,
+    #[comptime] fk: FmaKind,
+) -> (Vector<f64, N>, Vector<u64, N>, Vector<u64, N>) {
+    let shift = Vector::<f64, N>::new(t::SHIFT);
+    let kd_s = fma64_vec::<N>(x, Vector::<f64, N>::new(t::INVLN2N), shift, fk);
+    let ki = Vector::<u64, N>::reinterpret(kd_s);
+    let kd = kd_s - shift;
+    let r = fma64_vec::<N>(
+        kd,
+        Vector::<f64, N>::new(t::NEGLN2LON),
+        fma64_vec::<N>(kd, Vector::<f64, N>::new(t::NEGLN2HIN), x, fk),
+        fk,
+    );
+
+    let tab = exp_tab();
+    let idx = (ki & Vector::<u64, N>::new(127u64)) * Vector::<u64, N>::new(2u64);
+    let mut tail_bits = Vector::<u64, N>::empty();
+    let mut scale_bits = Vector::<u64, N>::empty();
+    #[unroll]
+    for j in 0..N::value() {
+        let i = usize::cast_from(idx[j]);
+        tail_bits[j] = tab[i];
+        scale_bits[j] = tab[i + 1];
+    }
+    let tail = Vector::<f64, N>::reinterpret(tail_bits);
+    let sbits = scale_bits + (ki << Vector::<u64, N>::new(45u64));
+
+    let p12 = fma64_vec::<N>(
+        r,
+        Vector::<f64, N>::new(t::C3),
+        Vector::<f64, N>::new(t::C2),
+        fk,
+    );
+    let t3 = tail + r;
+    let r2 = r * r;
+    let p45 = fma64_vec::<N>(
+        r,
+        Vector::<f64, N>::new(t::C5),
+        Vector::<f64, N>::new(t::C4),
+        fk,
+    );
+    let s1 = fma64_vec::<N>(r2, p12, t3, fk);
+    let r4 = r2 * r2;
+    let tmp = fma64_vec::<N>(r4, p45, s1, fk);
+    (tmp, sbits, ki)
+}
+
+/// [`fast()`] on N elements; the `checked` repair is per element.
+#[cube]
+pub fn fast_vec<N: Size>(
+    x: Vector<f64, N>,
+    #[comptime] checked: bool,
+    #[comptime] fk: FmaKind,
+) -> Vector<f64, N> {
+    let shift = Vector::<f64, N>::new(t::SHIFT);
+    let kd_s = fma64_vec::<N>(x, Vector::<f64, N>::new(LOG2E), shift, fk);
+    let kd = kd_s - shift;
+    let r = fma64_vec::<N>(
+        kd,
+        Vector::<f64, N>::new(-LN2LO),
+        fma64_vec::<N>(kd, Vector::<f64, N>::new(-LN2HI), x, fk),
+        fk,
+    );
+
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let r8 = r4 * r4;
+
+    let c23 = fma64_vec::<N>(r, Vector::<f64, N>::new(F1), Vector::<f64, N>::new(F0), fk);
+    let c45 = fma64_vec::<N>(r, Vector::<f64, N>::new(F3), Vector::<f64, N>::new(F2), fk);
+    let c67 = fma64_vec::<N>(r, Vector::<f64, N>::new(F5), Vector::<f64, N>::new(F4), fk);
+    let c89 = fma64_vec::<N>(r, Vector::<f64, N>::new(F7), Vector::<f64, N>::new(F6), fk);
+    let cab = fma64_vec::<N>(r, Vector::<f64, N>::new(F9), Vector::<f64, N>::new(F8), fk);
+    let ccd = fma64_vec::<N>(
+        r,
+        Vector::<f64, N>::new(F11),
+        Vector::<f64, N>::new(F10),
+        fk,
+    );
+
+    let lo0 = fma64_vec::<N>(r2, c23, r, fk);
+    let mid = fma64_vec::<N>(r2, c67, c45, fk);
+    let hi = fma64_vec::<N>(r2, cab, c89, fk);
+    let lo = fma64_vec::<N>(r4, mid, lo0, fk);
+    let hi2 = fma64_vec::<N>(r4, ccd, hi, fk);
+    let poly = fma64_vec::<N>(r8, hi2, lo, fk);
+
+    let ki = Vector::<u64, N>::reinterpret(kd_s);
+    let k = (ki & Vector::<u64, N>::new(0x000f_ffff_ffff_ffffu64))
+        - Vector::<u64, N>::new(1u64 << 51u64);
+    let scale = Vector::<f64, N>::reinterpret(
+        (k + Vector::<u64, N>::new(1023u64)) << Vector::<u64, N>::new(52u64),
+    );
+    let mut out = fma64_vec::<N>(scale, poly, scale, fk);
+
+    if comptime!(checked) {
+        #[unroll]
+        for j in 0..N::value() {
+            let xj = x[j];
+            let abstop = u32::cast_from(u64::reinterpret(xj) >> 52u64) & 0x7ffu32;
+            if abstop >= 0x408u32 || abstop < 0x3c9u32 {
+                out[j] = bit_exact(xj, fk);
+            }
+        }
+    }
+    out
+}
