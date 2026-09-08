@@ -41,7 +41,7 @@ const P52: f64 = 4503599627370496.0;
 pub fn ln(x: f64, #[comptime] cfg: MathConfig) -> f64 {
     let x = crate::bits::opaque64(x);
     if comptime!(cfg.bit_exact()) {
-        bit_exact(x)
+        bit_exact(x, comptime!(cfg.fma()))
     } else {
         fast(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
@@ -49,7 +49,7 @@ pub fn ln(x: f64, #[comptime] cfg: MathConfig) -> f64 {
 
 /// The reference schedule, over the whole domain.
 #[cube]
-pub fn bit_exact(x: f64) -> f64 {
+pub fn bit_exact(x: f64, #[comptime] fk: FmaKind) -> f64 {
     let ix = u64::reinterpret(x);
     let top = u32::cast_from(ix >> 48u64);
     let mut out = x;
@@ -58,7 +58,7 @@ pub fn bit_exact(x: f64) -> f64 {
         // The near-one window, where the table path loses too much to
         // cancellation. `ln(1)` is exactly zero and the series would not give
         // a signed zero, so it is called out.
-        out = select(ix == 0x3ff0_0000_0000_0000u64, 0.0, near_one(x));
+        out = select(ix == 0x3ff0_0000_0000_0000u64, 0.0, near_one(x, fk));
     } else if top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
         // Zero, subnormal, negative, infinite or NaN.
         if ix * 2u64 == 0u64 {
@@ -73,17 +73,22 @@ pub fn bit_exact(x: f64) -> f64 {
         } else {
             // Subnormal: scale into the normal range and correct the exponent.
             let iz = u64::reinterpret(x * P52) - (52u64 << 52u64);
-            out = main(iz);
+            out = main(iz, fk);
         }
     } else {
-        out = main(ix);
+        out = main(ix, fk);
     }
     out
 }
 
 /// The table path, taking already-normalised bits.
+///
+/// Every multiply-add here goes through [`fma64()`]: the schedule is
+/// `__ieee754_log_fma`'s, so the *fused* form is the contract, and on a
+/// backend whose `fma` rounds twice the emulation is what keeps the claim
+/// true. See [`crate::fma`].
 #[cube]
-pub fn main(ix: u64) -> f64 {
+pub fn main(ix: u64, #[comptime] fk: FmaKind) -> f64 {
     let tmp = ix - OFF;
     let i = usize::cast_from((tmp >> 45u64) & 127u64);
     // An *arithmetic* shift: `tmp`'s top bits carry the exponent, sign and all.
@@ -97,18 +102,18 @@ pub fn main(ix: u64) -> f64 {
     let z = f64::reinterpret(iz);
     let kd = f64::cast_from(k);
 
-    let w = fma(kd, t::LN2HI, logc);
-    let r = fma(z, invc, -1.0);
-    let q12 = fma(r, t::A2, t::A1);
+    let w = fma64(kd, t::LN2HI, logc, fk);
+    let r = fma64(z, invc, -1.0, fk);
+    let q12 = fma64(r, t::A2, t::A1, fk);
     let hi = r + w;
     let r2 = r * r;
     let tt = (w - hi) + r;
-    let lo = fma(kd, t::LN2LO, tt);
+    let lo = fma64(kd, t::LN2LO, tt, fk);
     let r3 = r * r2;
-    let q34 = fma(r, t::A4, t::A3);
-    let s1 = fma(r2, t::A0, lo);
-    let q = fma(r2, q34, q12);
-    fma(r3, q, s1) + hi
+    let q34 = fma64(r, t::A4, t::A3, fk);
+    let s1 = fma64(r2, t::A0, lo, fk);
+    let q = fma64(r2, q34, q12, fk);
+    fma64(r3, q, s1, fk) + hi
 }
 
 /// The `0.9375 <= x < 1 + 0x1.09p-4` path.
@@ -117,31 +122,36 @@ pub fn main(ix: u64) -> f64 {
 /// double-double: near one, the leading terms cancel almost completely, and
 /// evaluating them at working precision would leave nothing behind.
 #[cube]
-pub fn near_one(x: f64) -> f64 {
+pub fn near_one(x: f64, #[comptime] fk: FmaKind) -> f64 {
     let r = x - 1.0;
-    let p12 = fma(r, t::B2, t::B1);
-    let p45 = fma(r, t::B5, t::B4);
+    let p12 = fma64(r, t::B2, t::B1, fk);
+    let p45 = fma64(r, t::B5, t::B4, fk);
     let r2 = r * r;
-    let p78 = fma(r, t::B8, t::B7);
-    let p123 = fma(r2, t::B3, p12);
-    let p456 = fma(r2, t::B6, p45);
+    let p78 = fma64(r, t::B8, t::B7, fk);
+    let p123 = fma64(r2, t::B3, p12, fk);
+    let p456 = fma64(r2, t::B6, p45, fk);
     let r3 = r * r2;
-    let p789 = fma(r2, t::B9, p78);
-    let p78910 = fma(r3, t::B10, p789);
-    let pin = fma(p78910, r3, p456);
-    let poly = fma(pin, r3, p123);
+    let p789 = fma64(r2, t::B9, p78, fk);
+    let p78910 = fma64(r3, t::B10, p789, fk);
+    let pin = fma64(p78910, r3, p456, fk);
+    let poly = fma64(pin, r3, p123, fk);
 
+    // The Veltkamp split is the one place the fusion is load-bearing beyond
+    // accuracy: `rhi_t - r * 2^27` is exact only because the product and the
+    // subtraction share a rounding, which is what leaves `rhi` with 26 clean
+    // significant bits. An unfused pair here does not merely lose an ulp, it
+    // stops splitting.
     let split = 134217728.0; // 0x1p27
-    let rhi_t = fma(r, split, r);
-    let rhi = fma(-r, split, rhi_t);
+    let rhi_t = fma64(r, split, r, fk);
+    let rhi = fma64(-r, split, rhi_t, fk);
     let rlo = r - rhi;
     let s = rhi * rhi;
-    let hi = fma(s, t::B0, r);
+    let hi = fma64(s, t::B0, r, fk);
     let tt = r - hi;
     let rpr = r + rhi;
-    let lo0 = fma(s, t::B0, tt);
-    let lo = fma(t::B0 * rlo, rpr, lo0);
-    fma(poly, r3, lo) + hi
+    let lo0 = fma64(s, t::B0, tt, fk);
+    let lo = fma64(t::B0 * rlo, rpr, lo0, fk);
+    fma64(poly, r3, lo, fk) + hi
 }
 
 /// `2 / (2k + 1)` for `k` in `0..=10`: the odd series for `ln((1+s)/(1-s))`.
@@ -191,7 +201,7 @@ pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
         // policy. See `exp`'s `fast`.
         let top = u32::cast_from(u64::reinterpret(x) >> 48u64);
         if top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
-            out = bit_exact(x);
+            out = bit_exact(x, fk);
         }
     }
     out
@@ -252,7 +262,7 @@ pub fn fold(x: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
 #[cube]
 pub fn ln_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
     if comptime!(cfg.bit_exact()) {
-        bit_exact_vec::<N>(x)
+        bit_exact_vec::<N>(x, comptime!(cfg.fma()))
     } else {
         fast_vec::<N>(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
     }
@@ -267,15 +277,15 @@ pub fn ln_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector
 /// input produces a meaningless number rather than a trap, and the repair
 /// overwrites it.
 #[cube]
-pub fn bit_exact_vec<N: Size>(x: Vector<f64, N>) -> Vector<f64, N> {
-    let mut out = main_vec::<N>(Vector::<u64, N>::reinterpret(x));
+pub fn bit_exact_vec<N: Size>(x: Vector<f64, N>, #[comptime] fk: FmaKind) -> Vector<f64, N> {
+    let mut out = main_vec::<N>(Vector::<u64, N>::reinterpret(x), fk);
     #[unroll]
     for j in 0..N::value() {
         let xj = x[j];
         let ix = u64::reinterpret(xj);
         let top = u32::cast_from(ix >> 48u64);
         if ix - NEAR_LO < NEAR_HI - NEAR_LO || top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
-            out[j] = bit_exact(xj);
+            out[j] = bit_exact(xj, fk);
         }
     }
     out
@@ -284,11 +294,12 @@ pub fn bit_exact_vec<N: Size>(x: Vector<f64, N>) -> Vector<f64, N> {
 /// [`main()`] on N elements: the same operations in the same order, per
 /// element; only the table gather is per element by necessity.
 ///
-/// Unfused arithmetic is never substituted for a fused multiply-add here, for
-/// the same reason [`main()`] does not take an [`FmaKind`]: the schedule is
-/// `__ieee754_log_fma`'s, and it is the fused form that is the contract.
+/// The multiply-adds go through [`fma64_vec()`], so a device without a fused
+/// one takes the emulation per element here exactly as [`main()`] takes it per
+/// scalar — which is what keeps the two bit-identical on such a device rather
+/// than only on a device that happens to fuse.
 #[cube]
-pub fn main_vec<N: Size>(ix: Vector<u64, N>) -> Vector<f64, N> {
+pub fn main_vec<N: Size>(ix: Vector<u64, N>, #[comptime] fk: FmaKind) -> Vector<f64, N> {
     let tmp = ix - Vector::<u64, N>::new(OFF);
     let idx = (tmp >> Vector::<u64, N>::new(45u64)) & Vector::<u64, N>::new(127u64);
     // An *arithmetic* shift: `tmp`'s top bits carry the exponent, sign and all.
@@ -309,26 +320,28 @@ pub fn main_vec<N: Size>(ix: Vector<u64, N>) -> Vector<f64, N> {
     let z = Vector::<f64, N>::reinterpret(iz);
     let kd = Vector::<f64, N>::cast_from(k);
 
-    let w = fma(kd, Vector::<f64, N>::new(t::LN2HI), logc);
-    let r = fma(z, invc, Vector::<f64, N>::new(-1.0));
-    let q12 = fma(
+    let w = fma64_vec::<N>(kd, Vector::<f64, N>::new(t::LN2HI), logc, fk);
+    let r = fma64_vec::<N>(z, invc, Vector::<f64, N>::new(-1.0), fk);
+    let q12 = fma64_vec::<N>(
         r,
         Vector::<f64, N>::new(t::A2),
         Vector::<f64, N>::new(t::A1),
+        fk,
     );
     let hi = r + w;
     let r2 = r * r;
     let tt = (w - hi) + r;
-    let lo = fma(kd, Vector::<f64, N>::new(t::LN2LO), tt);
+    let lo = fma64_vec::<N>(kd, Vector::<f64, N>::new(t::LN2LO), tt, fk);
     let r3 = r * r2;
-    let q34 = fma(
+    let q34 = fma64_vec::<N>(
         r,
         Vector::<f64, N>::new(t::A4),
         Vector::<f64, N>::new(t::A3),
+        fk,
     );
-    let s1 = fma(r2, Vector::<f64, N>::new(t::A0), lo);
-    let q = fma(r2, q34, q12);
-    fma(r3, q, s1) + hi
+    let s1 = fma64_vec::<N>(r2, Vector::<f64, N>::new(t::A0), lo, fk);
+    let q = fma64_vec::<N>(r2, q34, q12, fk);
+    fma64_vec::<N>(r3, q, s1, fk) + hi
 }
 
 /// [`fast()`] on N elements; the `checked` repair is per element.
@@ -352,7 +365,7 @@ pub fn fast_vec<N: Size>(
             let xj = x[j];
             let top = u32::cast_from(u64::reinterpret(xj) >> 48u64);
             if top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
-                out[j] = bit_exact(xj);
+                out[j] = bit_exact(xj, fk);
             }
         }
     }

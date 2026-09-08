@@ -320,7 +320,8 @@ pub fn y0(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
         } else if ix <= 0x3e40_0000u32 {
             // `x < 2^-27`: `U/V` is `U[0]` and `j0(x)` is `1`.
             let tab = bessel_small_tab();
-            out = f64::reinterpret(tab[usize::cast_from(Y0_U)]) + t::TPI * ln(x);
+            out = f64::reinterpret(tab[usize::cast_from(Y0_U)])
+                + t::TPI * ln(x, comptime!(cfg.fma()));
         } else {
             let z = x * x;
             let tab = bessel_small_tab();
@@ -339,7 +340,7 @@ pub fn y0(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
             let v2 = f64::reinterpret(tab[v + 1]) + z * f64::reinterpret(tab[v + 2]);
             let vd = v1 + z2 * v2 + z4 * f64::reinterpret(tab[v + 3]);
 
-            out = un / vd + t::TPI * (j0(x, cfg) * ln(x));
+            out = un / vd + t::TPI * (j0(x, cfg) * ln(x, comptime!(cfg.fma())));
         }
     }
     out
@@ -431,7 +432,7 @@ pub fn y1(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
             let v3 = f64::reinterpret(tab[v + 3]) + z * f64::reinterpret(tab[v + 4]);
             let vd = v1 + z2 * v2 + z4 * v3;
 
-            out = x * (un / vd) + t::TPI * (j1(x, cfg) * ln(x) - 1.0 / x);
+            out = x * (un / vd) + t::TPI * (j1(x, cfg) * ln(x, comptime!(cfg.fma())) - 1.0 / x);
         }
     }
     out
@@ -556,7 +557,8 @@ pub fn jn(nf: f64, x0: f64, #[comptime] cfg: MathConfig) -> f64 {
                 // whenever it gets large. Both loops exist because the test is
                 // made once, not per iteration.
                 let v = 2.0 / x;
-                let tmp = f64::cast_from(n) * ln(f64::abs(v * f64::cast_from(n)));
+                let tmp =
+                    f64::cast_from(n) * ln(f64::abs(v * f64::cast_from(n)), comptime!(cfg.fma()));
                 let mut di = f64::cast_from((n - 1i32) + (n - 1i32));
                 let mut j = 1i32.runtime();
                 if tmp < LN_MAX {

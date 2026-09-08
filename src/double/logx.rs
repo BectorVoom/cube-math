@@ -106,9 +106,9 @@ pub fn log2(x: f64, #[comptime] cfg: MathConfig) -> f64 {
         out = edge(x);
     } else if comptime!(cfg.bit_exact()) {
         if x >= NEAR_LO && x < NEAR_HI {
-            out = log2_near_one(x);
+            out = log2_near_one(x, comptime!(cfg.fma()));
         } else {
-            out = log2_main(normalised_bits(x));
+            out = log2_main(normalised_bits(x), comptime!(cfg.fma()));
         }
     } else {
         out = log2_fast(x, comptime!(cfg.fma()));
@@ -117,8 +117,13 @@ pub fn log2(x: f64, #[comptime] cfg: MathConfig) -> f64 {
 }
 
 /// The table path, taking already-normalised bits.
+///
+/// Every multiply-add goes through [`fma64()`]: the schedule is
+/// `__ieee754_log2_fma`'s, so the *fused* form is the contract, and on a
+/// backend whose `fma` rounds twice the emulation is what keeps the claim
+/// true. See [`crate::fma`].
 #[cube]
-pub fn log2_main(ix: u64) -> f64 {
+pub fn log2_main(ix: u64, #[comptime] fk: FmaKind) -> f64 {
     let tmp = ix - OFF;
     let idx = usize::cast_from((tmp >> 46u64) & 63u64);
     let z = f64::reinterpret(ix - (tmp & (0xfffu64 << 52u64)));
@@ -130,9 +135,13 @@ pub fn log2_main(ix: u64) -> f64 {
     let logc = f64::reinterpret(tab[base + 1]);
 
     // `r = z/c - 1`, then `r / ln 2` carried in double-double as `t1 + t2`.
-    let r = fma(z, invc, -1.0);
+    // `t2` is `t1`'s exact residual, and it exists only because the multiply
+    // and the subtract inside it share one rounding — so an unfused
+    // multiply-add here would not merely lose an ulp, it would compute zero
+    // and throw the low half of the double-double away.
+    let r = fma64(z, invc, -1.0, fk);
     let t1 = r * t::INVLN2HI;
-    let t2 = fma(r, t::INVLN2LO, fma(r, t::INVLN2HI, -t1));
+    let t2 = fma64(r, t::INVLN2LO, fma64(r, t::INVLN2HI, -t1, fk), fk);
 
     let t3 = kd + logc;
     let hi = t3 + t1;
@@ -140,38 +149,39 @@ pub fn log2_main(ix: u64) -> f64 {
 
     let r2 = r * r;
     let r4 = r2 * r2;
-    let a01 = fma(r, t::A1, t::A0);
-    let a23 = fma(r, t::A3, t::A2);
-    let a45 = fma(r, t::A5, t::A4);
-    let poly = fma(r4, a45, fma(r2, a23, a01));
-    hi + fma(r2, poly, lo)
+    let a01 = fma64(r, t::A1, t::A0, fk);
+    let a23 = fma64(r, t::A3, t::A2, fk);
+    let a45 = fma64(r, t::A5, t::A4, fk);
+    let poly = fma64(r4, a45, fma64(r2, a23, a01, fk), fk);
+    hi + fma64(r2, poly, lo, fk)
 }
 
 /// The near-one path, where `log2(x)` is small and the table path's `hi + lo`
 /// would cancel away its own accuracy.
 #[cube]
-pub fn log2_near_one(x: f64) -> f64 {
+pub fn log2_near_one(x: f64, #[comptime] fk: FmaKind) -> f64 {
     let r = x - 1.0;
     let hi0 = r * t::INVLN2HI;
     let r2 = r * r;
     let r4 = r2 * r2;
 
-    let lo0 = fma(r, t::INVLN2LO, fma(r, t::INVLN2HI, -hi0));
+    // `hi0`'s exact residual, for the reason [`log2_main()`] gives.
+    let lo0 = fma64(r, t::INVLN2LO, fma64(r, t::INVLN2HI, -hi0, fk), fk);
 
-    let b01 = fma(r, t::B1, t::B0);
-    let y = fma(r2, b01, hi0);
-    let lo = lo0 + fma(r2, b01, hi0 - y);
+    let b01 = fma64(r, t::B1, t::B0, fk);
+    let y = fma64(r2, b01, hi0, fk);
+    let lo = lo0 + fma64(r2, b01, hi0 - y, fk);
 
-    let b23 = fma(r, t::B3, t::B2);
-    let b45 = fma(r, t::B5, t::B4);
-    let b23_45 = fma(r2, b45, b23);
+    let b23 = fma64(r, t::B3, t::B2, fk);
+    let b45 = fma64(r, t::B5, t::B4, fk);
+    let b23_45 = fma64(r2, b45, b23, fk);
 
-    let b67 = fma(r, t::B7, t::B6);
-    let b89 = fma(r, t::B9, t::B8);
-    let b67_89 = fma(r2, b89, b67);
+    let b67 = fma64(r, t::B7, t::B6, fk);
+    let b89 = fma64(r, t::B9, t::B8, fk);
+    let b67_89 = fma64(r2, b89, b67, fk);
 
-    let tail = fma(r4, b67_89, b23_45);
-    y + fma(r4, tail, lo)
+    let tail = fma64(r4, b67_89, b23_45, fk);
+    y + fma64(r4, tail, lo, fk)
 }
 
 /// The table-free path: [`super::ln`]'s significand fold, scaled to base 2.
@@ -210,7 +220,7 @@ pub fn log10(x: f64, #[comptime] cfg: MathConfig) -> f64 {
     if degenerate(x) {
         out = edge(x);
     } else if comptime!(cfg.bit_exact()) {
-        out = log10_main(normalised_bits(x));
+        out = log10_main(normalised_bits(x), comptime!(cfg.fma()));
     } else {
         let (e, poly) = crate::double::ln::fold(x, comptime!(cfg.fma()));
         // `e log10(2) + ln(m) / ln(10)` rather than `ln(x) / ln(10)`: the
@@ -222,8 +232,11 @@ pub fn log10(x: f64, #[comptime] cfg: MathConfig) -> f64 {
 }
 
 /// The reduce-and-delegate path, for already-normalised bits.
+///
+/// The `fk` it takes is for the `ln` it delegates to. The three operations it
+/// performs itself stay unfused on every device, for the reason below.
 #[cube]
-pub fn log10_main(b: u64) -> f64 {
+pub fn log10_main(b: u64, #[comptime] fk: FmaKind) -> f64 {
     // An *arithmetic* shift: `normalised_bits` can leave the exponent
     // field negative for a renormalised subnormal, and reading it as an
     // unsigned field would turn that into a huge positive exponent.
@@ -237,7 +250,7 @@ pub fn log10_main(b: u64) -> f64 {
     // The *whole* of `ln`, near-one path included — that is what
     // `__log10_finite` calls. Going straight to the table walk would make
     // `log10(1)` a tiny nonzero instead of an exact zero.
-    let lr = crate::double::ln::bit_exact(reduced);
+    let lr = crate::double::ln::bit_exact(reduced, fk);
     // Deliberately not fused: the disassembly has three separate
     // multiply/add pairs here, not a fusion opportunity.
     (lr * INV_LN10 + y * LOG10_2LO) + y * LOG10_2HI
@@ -267,7 +280,7 @@ pub fn normalised_bits_vec<N: Size>(x: Vector<f64, N>) -> Vector<u64, N> {
 #[cube]
 pub fn log2_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
     if comptime!(cfg.bit_exact()) {
-        log2_bit_exact_vec::<N>(x)
+        log2_bit_exact_vec::<N>(x, comptime!(cfg.fma()))
     } else {
         log2_fast_vec::<N>(x, comptime!(cfg.fma()))
     }
@@ -276,15 +289,15 @@ pub fn log2_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vect
 /// [`log2()`]'s bit-exact arm on N elements: [`log2_main_vec()`] on the whole
 /// vector, the near-one window and the degenerate inputs per element.
 #[cube]
-pub fn log2_bit_exact_vec<N: Size>(x: Vector<f64, N>) -> Vector<f64, N> {
-    let mut out = log2_main_vec::<N>(normalised_bits_vec::<N>(x));
+pub fn log2_bit_exact_vec<N: Size>(x: Vector<f64, N>, #[comptime] fk: FmaKind) -> Vector<f64, N> {
+    let mut out = log2_main_vec::<N>(normalised_bits_vec::<N>(x), fk);
     #[unroll]
     for j in 0..N::value() {
         let xj = x[j];
         if degenerate(xj) {
             out[j] = edge(xj);
         } else if xj >= NEAR_LO && xj < NEAR_HI {
-            out[j] = log2_near_one(xj);
+            out[j] = log2_near_one(xj, fk);
         }
     }
     out
@@ -293,7 +306,7 @@ pub fn log2_bit_exact_vec<N: Size>(x: Vector<f64, N>) -> Vector<f64, N> {
 /// [`log2_main()`] on N elements: the same operations in the same order, per
 /// element; only the table gather is per element by necessity.
 #[cube]
-pub fn log2_main_vec<N: Size>(ix: Vector<u64, N>) -> Vector<f64, N> {
+pub fn log2_main_vec<N: Size>(ix: Vector<u64, N>, #[comptime] fk: FmaKind) -> Vector<f64, N> {
     let tmp = ix - Vector::<u64, N>::new(OFF);
     let idx = (tmp >> Vector::<u64, N>::new(46u64)) & Vector::<u64, N>::new(63u64);
     let z = Vector::<f64, N>::reinterpret(ix - (tmp & Vector::<u64, N>::new(0xfffu64 << 52u64)));
@@ -314,17 +327,18 @@ pub fn log2_main_vec<N: Size>(ix: Vector<u64, N>) -> Vector<f64, N> {
     let logc = Vector::<f64, N>::reinterpret(logc_bits);
 
     // `r = z/c - 1`, then `r / ln 2` carried in double-double as `t1 + t2`.
-    let r = fma(z, invc, Vector::<f64, N>::new(-1.0));
+    let r = fma64_vec::<N>(z, invc, Vector::<f64, N>::new(-1.0), fk);
     let t1 = r * Vector::<f64, N>::new(t::INVLN2HI);
     // `-t1`, computed as `r * -INVLN2HI` rather than by negating `t1`: the C++
     // backends have no unary minus on a vector type. A product's sign is the
     // exclusive or of its operands' signs and its magnitude comes from theirs,
     // so this is `-(r * INVLN2HI)` bit for bit.
     let neg_t1 = r * Vector::<f64, N>::new(-t::INVLN2HI);
-    let t2 = fma(
+    let t2 = fma64_vec::<N>(
         r,
         Vector::<f64, N>::new(t::INVLN2LO),
-        fma(r, Vector::<f64, N>::new(t::INVLN2HI), neg_t1),
+        fma64_vec::<N>(r, Vector::<f64, N>::new(t::INVLN2HI), neg_t1, fk),
+        fk,
     );
 
     let t3 = kd + logc;
@@ -333,23 +347,26 @@ pub fn log2_main_vec<N: Size>(ix: Vector<u64, N>) -> Vector<f64, N> {
 
     let r2 = r * r;
     let r4 = r2 * r2;
-    let a01 = fma(
+    let a01 = fma64_vec::<N>(
         r,
         Vector::<f64, N>::new(t::A1),
         Vector::<f64, N>::new(t::A0),
+        fk,
     );
-    let a23 = fma(
+    let a23 = fma64_vec::<N>(
         r,
         Vector::<f64, N>::new(t::A3),
         Vector::<f64, N>::new(t::A2),
+        fk,
     );
-    let a45 = fma(
+    let a45 = fma64_vec::<N>(
         r,
         Vector::<f64, N>::new(t::A5),
         Vector::<f64, N>::new(t::A4),
+        fk,
     );
-    let poly = fma(r4, a45, fma(r2, a23, a01));
-    hi + fma(r2, poly, lo)
+    let poly = fma64_vec::<N>(r4, a45, fma64_vec::<N>(r2, a23, a01, fk), fk);
+    hi + fma64_vec::<N>(r2, poly, lo, fk)
 }
 
 /// [`log2_fast()`] on N elements; the degenerate inputs are repaired per
@@ -373,7 +390,7 @@ pub fn log2_fast_vec<N: Size>(x: Vector<f64, N>, #[comptime] fk: FmaKind) -> Vec
 #[cube]
 pub fn log10_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
     let mut out = if comptime!(cfg.bit_exact()) {
-        log10_main_vec::<N>(normalised_bits_vec::<N>(x))
+        log10_main_vec::<N>(normalised_bits_vec::<N>(x), comptime!(cfg.fma()))
     } else {
         let (e, poly) = crate::double::ln::fold_vec::<N>(x, comptime!(cfg.fma()));
         fma64_vec::<N>(
@@ -400,7 +417,7 @@ pub fn log10_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vec
 /// a tiny nonzero. The three closing operations are deliberately unfused, for
 /// the reason [`log10_main()`] gives.
 #[cube]
-pub fn log10_main_vec<N: Size>(b: Vector<u64, N>) -> Vector<f64, N> {
+pub fn log10_main_vec<N: Size>(b: Vector<u64, N>, #[comptime] fk: FmaKind) -> Vector<f64, N> {
     // An *arithmetic* shift, for the reason [`log10_main()`] gives.
     let k = (Vector::<i64, N>::reinterpret(b) >> Vector::<i64, N>::new(52i64))
         - Vector::<i64, N>::new(1023i64);
@@ -415,7 +432,7 @@ pub fn log10_main_vec<N: Size>(b: Vector<u64, N>) -> Vector<f64, N> {
         (b & Vector::<u64, N>::new(0x000f_ffff_ffff_ffffu64)) | exp_field,
     );
 
-    let lr = crate::double::ln::bit_exact_vec::<N>(reduced);
+    let lr = crate::double::ln::bit_exact_vec::<N>(reduced, fk);
     (lr * Vector::<f64, N>::new(INV_LN10) + y * Vector::<f64, N>::new(LOG10_2LO))
         + y * Vector::<f64, N>::new(LOG10_2HI)
 }

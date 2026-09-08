@@ -269,7 +269,7 @@ pub fn lgamma(x0: f64, #[comptime] cfg: MathConfig) -> f64 {
         // term, so `ln|Gamma(x)|` is `-ln|x|` rounded once.
         out = inf64();
         if x != 0.0 && f64::abs(x) != inf64() {
-            out = -ln::bit_exact(f64::abs(x));
+            out = -ln::bit_exact(f64::abs(x), fk);
         }
     } else if x < 0.0 && x == trunc(x, cfg) {
         out = inf64(); // a pole

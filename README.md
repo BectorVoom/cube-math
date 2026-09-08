@@ -471,6 +471,23 @@ infinity where a subnormal belonged sailed through.
 instruction on 1.6 million triples, including the cancellation, subnormal and
 tie cases that separate a correct emulation from a plausible one.
 
+`tests/software_fma.rs` checks the *kernels* with that emulation substituted —
+`FmaKind::Software` forced on a device that has a real fused multiply-add, held
+to `rmath`'s bits. Neither backend reachable here needs the software path, so
+`tests/equivalence.rs` never takes it: it reads the `FmaKind` off the device
+and both devices fuse. Forcing it is what makes the path testable at all, and
+it is testable *because* `fma_f64` is correctly rounded — a correct emulation
+has to land on the hardware instruction's answer, so agreement is evidence.
+
+It is also how `ln`, `log2` and `log10` were found reaching for the raw `fma`
+intrinsic instead of `fma64(.., fk)`, which meant their bit-exact paths ignored
+`FmaKind` and would have rounded twice on SPIR-V. Note what that implies about
+the limits of this check: on a fused device the two spellings *are* the same
+number, so no test that runs here can see the difference. What the file pins is
+that the software path runs and reproduces glibc's schedule; that every site
+was converted is a static fact, checked by there being no bare `fma(` left in
+those modules.
+
 `tests/vector.rs` holds each `_vec` entry point to `to_bits()` equality with
 its scalar twin, on all four policies, at widths 1/2/4/8, over the equivalence
 sweep plus every branch boundary the function has. The boundaries are the
