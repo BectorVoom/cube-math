@@ -60,6 +60,25 @@
 //! does `rmath`'s "delegating" category: the functions whose bit-exact path had
 //! to run one lane at a time on a CPU are ordinary parallel kernels here.
 //!
+//! # Where a narrow version of it came back
+//!
+//! Six functions — [`double::exp`], [`double::exp2`], [`double::exp10`],
+//! [`double::ln`], and [`double::logx`]'s `log2` and `log10` — also carry a
+//! `_vec` entry point that evaluates `Vector<f64, N>` in one call, and those
+//! *are* `rmath`'s shape: the main path on the whole vector, the elements
+//! belonging to another branch repaired afterwards one at a time.
+//!
+//! It came back because the reason it went away does not cover every caller.
+//! The launch geometry is the right parallelism for a pass over an array; it is
+//! not available to a kernel that already holds N points in a vector for
+//! reasons of its own — a grid collocation, an unrolled stencil — and whose
+//! alternative is N extracts, N scalar calls and N inserts. Each `_vec`
+//! function is bit-identical to its scalar twin on every element, so nothing is
+//! traded for it; `tests/vector.rs` is the proof and the README has the
+//! measurements. On the CPU runtime the vector form runs about three times as
+//! fast at width 8; on a GPU it is close to flat, which is what SIMT should
+//! predict.
+//!
 //! # The two questions, unchanged
 //!
 //! [`Accuracy`] and [`Domain`] mean what they mean in `rmath`, and are

@@ -14,6 +14,15 @@
 //!
 //! Nothing has to be bound or uploaded to make that work: the tables are
 //! constant arrays compiled into the kernel. See [`crate::tables::consts`].
+//!
+//! # The vector entry points
+//!
+//! [`exp`], [`exp2`], [`exp10`], [`ln`] and [`logx`]'s two logarithms each
+//! carry a `_vec` twin taking `Vector<f64, N>`, bit-identical to the scalar
+//! one on every element. See [`exp`]'s module documentation for how that is
+//! arranged and [`crate`]'s for why. They are for a caller who already holds a
+//! vector — the launch side never uses them, because a pass over an array
+//! already has all the parallelism there is.
 
 pub mod acosh;
 pub mod asinh;

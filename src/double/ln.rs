@@ -9,12 +9,21 @@
 //!   a mantissa in `[sqrt(2)/2, sqrt(2))`, then a degree-15 odd series in
 //!   `s = (m - 1) / (m + 1)`, which converges fast enough over that interval
 //!   to stay inside an ulp without one.
+//!
+//! # The vector entry point
+//!
+//! [`ln_vec()`] evaluates N elements at once and is bit-identical to [`ln()`]
+//! on each. See [`super::exp`]'s module documentation for the shape. `ln`'s
+//! main path is [`main()`], the table walk, and it covers every positive
+//! normal outside the near-one window — so the elements repaired per element
+//! are the near-one ones (which take [`near_one()`], a different polynomial
+//! altogether) and the degenerate ones.
 
 use cubecl::prelude::*;
 
 use crate::bits::neg_inf64;
 use crate::config::MathConfig;
-use crate::fma::{FmaKind, fma64};
+use crate::fma::{FmaKind, fma64, fma64_vec};
 use crate::tables::consts::log_tab;
 use crate::tables::double::log as t;
 
@@ -232,4 +241,192 @@ pub fn fold(x: f64, #[comptime] fk: FmaKind) -> (f64, f64) {
     let poly = s * fma64(t8, hi, both, fk);
 
     (f64::cast_from(k), poly)
+}
+
+// ---------------------------------------------------------------------------
+// The vector entry point.
+// ---------------------------------------------------------------------------
+
+/// `ln(x)` on N elements at once, bit-identical per element to [`ln()`].
+/// See the module doc.
+#[cube]
+pub fn ln_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
+    if comptime!(cfg.bit_exact()) {
+        bit_exact_vec::<N>(x)
+    } else {
+        fast_vec::<N>(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
+    }
+}
+
+/// [`bit_exact()`] on N elements: [`main_vec()`] on the whole vector, the
+/// near-one window and the degenerate inputs replayed per element.
+///
+/// The table walk runs on every element, including the ones whose answer is
+/// then thrown away. That is safe as well as cheap: [`main_vec()`] is pure
+/// arithmetic on the bit pattern with a masked table index, so a degenerate
+/// input produces a meaningless number rather than a trap, and the repair
+/// overwrites it.
+#[cube]
+pub fn bit_exact_vec<N: Size>(x: Vector<f64, N>) -> Vector<f64, N> {
+    let mut out = main_vec::<N>(Vector::<u64, N>::reinterpret(x));
+    #[unroll]
+    for j in 0..N::value() {
+        let xj = x[j];
+        let ix = u64::reinterpret(xj);
+        let top = u32::cast_from(ix >> 48u64);
+        if ix - NEAR_LO < NEAR_HI - NEAR_LO || top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
+            out[j] = bit_exact(xj);
+        }
+    }
+    out
+}
+
+/// [`main()`] on N elements: the same operations in the same order, per
+/// element; only the table gather is per element by necessity.
+///
+/// Unfused arithmetic is never substituted for a fused multiply-add here, for
+/// the same reason [`main()`] does not take an [`FmaKind`]: the schedule is
+/// `__ieee754_log_fma`'s, and it is the fused form that is the contract.
+#[cube]
+pub fn main_vec<N: Size>(ix: Vector<u64, N>) -> Vector<f64, N> {
+    let tmp = ix - Vector::<u64, N>::new(OFF);
+    let idx = (tmp >> Vector::<u64, N>::new(45u64)) & Vector::<u64, N>::new(127u64);
+    // An *arithmetic* shift: `tmp`'s top bits carry the exponent, sign and all.
+    let k = Vector::<i64, N>::reinterpret(tmp) >> Vector::<i64, N>::new(52i64);
+    let iz = ix - (tmp & Vector::<u64, N>::new(0xfffu64 << 52u64));
+
+    let tab = log_tab();
+    let mut invc_bits = Vector::<u64, N>::empty();
+    let mut logc_bits = Vector::<u64, N>::empty();
+    #[unroll]
+    for j in 0..N::value() {
+        let base = 2usize * usize::cast_from(idx[j]);
+        invc_bits[j] = tab[base];
+        logc_bits[j] = tab[base + 1];
+    }
+    let invc = Vector::<f64, N>::reinterpret(invc_bits);
+    let logc = Vector::<f64, N>::reinterpret(logc_bits);
+    let z = Vector::<f64, N>::reinterpret(iz);
+    let kd = Vector::<f64, N>::cast_from(k);
+
+    let w = fma(kd, Vector::<f64, N>::new(t::LN2HI), logc);
+    let r = fma(z, invc, Vector::<f64, N>::new(-1.0));
+    let q12 = fma(
+        r,
+        Vector::<f64, N>::new(t::A2),
+        Vector::<f64, N>::new(t::A1),
+    );
+    let hi = r + w;
+    let r2 = r * r;
+    let tt = (w - hi) + r;
+    let lo = fma(kd, Vector::<f64, N>::new(t::LN2LO), tt);
+    let r3 = r * r2;
+    let q34 = fma(
+        r,
+        Vector::<f64, N>::new(t::A4),
+        Vector::<f64, N>::new(t::A3),
+    );
+    let s1 = fma(r2, Vector::<f64, N>::new(t::A0), lo);
+    let q = fma(r2, q34, q12);
+    fma(r3, q, s1) + hi
+}
+
+/// [`fast()`] on N elements; the `checked` repair is per element.
+#[cube]
+pub fn fast_vec<N: Size>(
+    x: Vector<f64, N>,
+    #[comptime] checked: bool,
+    #[comptime] fk: FmaKind,
+) -> Vector<f64, N> {
+    let (kd, poly) = fold_vec::<N>(x, fk);
+    let mut out = fma64_vec::<N>(
+        kd,
+        Vector::<f64, N>::new(LN2LO),
+        fma64_vec::<N>(kd, Vector::<f64, N>::new(LN2HI), poly, fk),
+        fk,
+    );
+
+    if comptime!(checked) {
+        #[unroll]
+        for j in 0..N::value() {
+            let xj = x[j];
+            let top = u32::cast_from(u64::reinterpret(xj) >> 48u64);
+            if top - 0x0010u32 >= 0x7ff0u32 - 0x0010u32 {
+                out[j] = bit_exact(xj);
+            }
+        }
+    }
+    out
+}
+
+/// [`fold()`] on N elements.
+///
+/// The two data-dependent decisions [`fold()`] spells as branches — the
+/// subnormal renormalisation and the recentring onto `[sqrt(2)/2, sqrt(2))` —
+/// become `select`s, which is what a vector can do. `k` is carried as an
+/// integer-valued `f64` rather than as an `i32`, so the recentring is a
+/// `+ 1.0` on a value below `2^11`; that is exact, and therefore the same
+/// number [`fold()`] casts at the end.
+#[cube]
+pub fn fold_vec<N: Size>(
+    x: Vector<f64, N>,
+    #[comptime] fk: FmaKind,
+) -> (Vector<f64, N>, Vector<f64, N>) {
+    let raw = Vector::<u64, N>::reinterpret(x);
+    let sub = (raw >> Vector::<u64, N>::new(52u64)) & Vector::<u64, N>::new(0x7ffu64)
+        == Vector::<u64, N>::new(0u64);
+    let bits = select(
+        sub,
+        Vector::<u64, N>::reinterpret(x * Vector::<f64, N>::new(P52)),
+        raw,
+    );
+    let biased = Vector::<f64, N>::cast_from(Vector::<u32, N>::cast_from(
+        (bits >> Vector::<u64, N>::new(52u64)) & Vector::<u64, N>::new(0x7ffu64),
+    ));
+    let k0 = biased
+        - Vector::<f64, N>::new(1023.0)
+        - select(sub, Vector::<f64, N>::new(52.0), Vector::<f64, N>::new(0.0));
+    // The mantissa, with the exponent replaced by zero: `m` in `[1, 2)`.
+    let m0 = Vector::<f64, N>::reinterpret(
+        (bits & Vector::<u64, N>::new(0x000f_ffff_ffff_ffffu64))
+            | Vector::<u64, N>::new(0x3ff0_0000_0000_0000u64),
+    );
+    // Recentre onto `[sqrt(2)/2, sqrt(2))`, where the series is shortest.
+    let big = m0 > Vector::<f64, N>::new(std::f64::consts::SQRT_2);
+    let m = select(big, m0 * Vector::<f64, N>::new(0.5), m0);
+    let k = select(big, k0 + Vector::<f64, N>::new(1.0), k0);
+
+    let s = (m - Vector::<f64, N>::new(1.0)) / (m + Vector::<f64, N>::new(1.0));
+    let tv = s * s;
+    let t2 = tv * tv;
+    let t4 = t2 * t2;
+    let t8 = t4 * t4;
+
+    let c13 = fma64_vec::<N>(tv, Vector::<f64, N>::new(S3), Vector::<f64, N>::new(S1), fk);
+    let c57 = fma64_vec::<N>(tv, Vector::<f64, N>::new(S7), Vector::<f64, N>::new(S5), fk);
+    let c911 = fma64_vec::<N>(
+        tv,
+        Vector::<f64, N>::new(S11),
+        Vector::<f64, N>::new(S9),
+        fk,
+    );
+    let c1315 = fma64_vec::<N>(
+        tv,
+        Vector::<f64, N>::new(S15),
+        Vector::<f64, N>::new(S13),
+        fk,
+    );
+    let c1719 = fma64_vec::<N>(
+        tv,
+        Vector::<f64, N>::new(S19),
+        Vector::<f64, N>::new(S17),
+        fk,
+    );
+    let lo = fma64_vec::<N>(t2, c57, c13, fk);
+    let mid = fma64_vec::<N>(t2, c1315, c911, fk);
+    let hi = fma64_vec::<N>(t2, Vector::<f64, N>::new(S21), c1719, fk);
+    let both = fma64_vec::<N>(t4, mid, lo, fk);
+    let poly = s * fma64_vec::<N>(t8, hi, both, fk);
+
+    (k, poly)
 }

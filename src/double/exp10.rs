@@ -11,12 +11,21 @@
 //! [`crate::Accuracy::Fast`] routes through [`super::exp2`]'s table-free path:
 //! `10^x` is `2^(x log2 10)`, and carrying the product in two pieces keeps the
 //! reduction exact enough that the result stays inside an ulp.
+//!
+//! # The vector entry point
+//!
+//! [`exp10_vec()`] evaluates N elements at once and is bit-identical to
+//! [`exp10()`] on each. See [`super::exp`]'s module documentation for the
+//! shape. `exp10`'s main path is `SMALL_TOP <= abstop < SMALL_TOP + THRESH`,
+//! i.e. `|x| < 256`, which sits comfortably inside both the overflow bound
+//! (308.25) and the underflow bound (-350), so that one test is the whole
+//! classification.
 
 use cubecl::prelude::*;
 
 use crate::bits::inf64;
 use crate::config::MathConfig;
-use crate::fma::{FmaKind, fma64};
+use crate::fma::{FmaKind, fma64, fma64_vec};
 use crate::tables::consts::exp_tab;
 use crate::tables::double::exp as t;
 use crate::tables::double::exp10 as x10;
@@ -163,6 +172,148 @@ pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
         let abstop = u32::cast_from(u64::reinterpret(x) >> 52u64) & 0x7ffu32;
         if abstop >= 0x405u32 || abstop < x10::SMALL_TOP {
             out = bit_exact(x);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// The vector entry point.
+// ---------------------------------------------------------------------------
+
+/// `10^x` on N elements at once, bit-identical per element to [`exp10()`].
+/// See the module doc.
+#[cube]
+pub fn exp10_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
+    if comptime!(cfg.bit_exact()) {
+        bit_exact_vec::<N>(x)
+    } else {
+        fast_vec::<N>(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
+    }
+}
+
+/// [`bit_exact()`] on N elements: the main path on the whole vector, the other
+/// branches replayed per element.
+///
+/// `SMALL_TOP <= abstop < SMALL_TOP + THRESH` is `|x| < 256`, and every other
+/// arm of the scalar cascade — the tiny answer, the non-finite answer, the two
+/// range answers and [`super::exp2::specialcase()`] — needs a larger `|x|`
+/// than that. So the one test decides the whole classification.
+#[cube]
+pub fn bit_exact_vec<N: Size>(x: Vector<f64, N>) -> Vector<f64, N> {
+    let (tmp, sbits, _ki) = core_vec::<N>(x);
+    let scale = Vector::<f64, N>::reinterpret(sbits);
+    let mut out = scale * tmp + scale;
+    #[unroll]
+    for j in 0..N::value() {
+        let xj = x[j];
+        let abstop = u32::cast_from(u64::reinterpret(xj) >> 52u64) & 0x7ffu32;
+        if abstop < x10::SMALL_TOP || abstop >= x10::SMALL_TOP + x10::THRESH {
+            out[j] = bit_exact(xj);
+        }
+    }
+    out
+}
+
+/// [`core()`] on N elements: the same operations in the same order, per
+/// element; only the table gather is per element by necessity.
+///
+/// `r` is rounded twice here too, for the reason [`core()`] gives.
+#[cube]
+pub fn core_vec<N: Size>(x: Vector<f64, N>) -> (Vector<f64, N>, Vector<u64, N>, Vector<u64, N>) {
+    let shift = Vector::<f64, N>::new(t::SHIFT);
+    let z = Vector::<f64, N>::new(x10::INVLOG10_2N) * x;
+    let kd_s = z + shift;
+    let ki = Vector::<u64, N>::reinterpret(kd_s);
+    let kd = kd_s - shift;
+
+    let r0 = Vector::<f64, N>::new(x10::NEGLOG10_2HIN) * kd + x;
+    let r = Vector::<f64, N>::new(x10::NEGLOG10_2LON) * kd + r0;
+
+    let tab = exp_tab();
+    let idx = (ki & Vector::<u64, N>::new(127u64)) * Vector::<u64, N>::new(2u64);
+    let mut tail_bits = Vector::<u64, N>::empty();
+    let mut scale_bits = Vector::<u64, N>::empty();
+    #[unroll]
+    for j in 0..N::value() {
+        let i = usize::cast_from(idx[j]);
+        tail_bits[j] = tab[i];
+        scale_bits[j] = tab[i + 1];
+    }
+    let tail = Vector::<f64, N>::reinterpret(tail_bits);
+    let sbits = scale_bits + (ki << Vector::<u64, N>::new(45u64));
+
+    let r2 = r * r;
+    let p = Vector::<f64, N>::new(x10::C0) + r * Vector::<f64, N>::new(x10::C1);
+    let y0 = Vector::<f64, N>::new(x10::C2) + r * Vector::<f64, N>::new(x10::C3);
+    let y1 = y0 + r2 * Vector::<f64, N>::new(x10::C4);
+    let y2 = p + r2 * y1;
+    (tail + y2 * r, sbits, ki)
+}
+
+/// [`fast()`] on N elements; the `checked` repair is per element.
+#[cube]
+pub fn fast_vec<N: Size>(
+    x: Vector<f64, N>,
+    #[comptime] checked: bool,
+    #[comptime] fk: FmaKind,
+) -> Vector<f64, N> {
+    let shift = Vector::<f64, N>::new(t::SHIFT);
+    let kd_s = fma64_vec::<N>(x, Vector::<f64, N>::new(x10::LOG2_10), shift, fk);
+    let kd = kd_s - shift;
+    // `fast()` writes this as `fma(-kd, LOG10_2xx, ...)`. The sign moves onto
+    // the constant instead, because the C++ backends have no unary minus on a
+    // vector type — `hipcc` rejects `-double_2` outright. It is the same
+    // number: IEEE multiplication takes the sign of a product as the exclusive
+    // or of its operands' signs and the magnitude from their magnitudes, so
+    // `(-kd) * c` and `kd * (-c)` are bit-identical on every input, and the
+    // fused multiply-add rounds the same exact product either way.
+    let r = fma64_vec::<N>(
+        kd,
+        Vector::<f64, N>::new(-x10::LOG10_2LO),
+        fma64_vec::<N>(kd, Vector::<f64, N>::new(-x10::LOG10_2HI), x, fk),
+        fk,
+    );
+
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let r8 = r4 * r4;
+
+    let c12 = fma64_vec::<N>(r, Vector::<f64, N>::new(H2), Vector::<f64, N>::new(H1), fk);
+    let c34 = fma64_vec::<N>(r, Vector::<f64, N>::new(H4), Vector::<f64, N>::new(H3), fk);
+    let c56 = fma64_vec::<N>(r, Vector::<f64, N>::new(H6), Vector::<f64, N>::new(H5), fk);
+    let c78 = fma64_vec::<N>(r, Vector::<f64, N>::new(H8), Vector::<f64, N>::new(H7), fk);
+    let c910 = fma64_vec::<N>(r, Vector::<f64, N>::new(H10), Vector::<f64, N>::new(H9), fk);
+    let c1112 = fma64_vec::<N>(
+        r,
+        Vector::<f64, N>::new(H12),
+        Vector::<f64, N>::new(H11),
+        fk,
+    );
+
+    let lo = fma64_vec::<N>(r2, c34, c12, fk);
+    let mid = fma64_vec::<N>(r2, c78, c56, fk);
+    let top = fma64_vec::<N>(r2, c1112, c910, fk);
+    let hi = fma64_vec::<N>(r4, Vector::<f64, N>::new(H13), top, fk);
+    let mid2 = fma64_vec::<N>(r4, mid, lo, fk);
+    let poly = r * fma64_vec::<N>(r8, hi, mid2, fk);
+
+    let ki = Vector::<u64, N>::reinterpret(kd_s);
+    let k = (ki & Vector::<u64, N>::new(0x000f_ffff_ffff_ffffu64))
+        - Vector::<u64, N>::new(1u64 << 51u64);
+    let scale = Vector::<f64, N>::reinterpret(
+        (k + Vector::<u64, N>::new(1023u64)) << Vector::<u64, N>::new(52u64),
+    );
+    let mut out = fma64_vec::<N>(scale, poly, scale, fk);
+
+    if comptime!(checked) {
+        #[unroll]
+        for j in 0..N::value() {
+            let xj = x[j];
+            let abstop = u32::cast_from(u64::reinterpret(xj) >> 52u64) & 0x7ffu32;
+            if abstop >= 0x405u32 || abstop < x10::SMALL_TOP {
+                out[j] = bit_exact(xj);
+            }
         }
     }
     out

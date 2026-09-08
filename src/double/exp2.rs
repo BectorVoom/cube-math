@@ -9,12 +9,22 @@
 //!   whose `fma` is not fused, as long as it does not contract.
 //! * [`crate::Accuracy::Fast`] — the table-free path, reduced to
 //!   `|r| <= 1/2` and corrected by a degree-11 series.
+//!
+//! # The vector entry point
+//!
+//! [`exp2_vec()`] evaluates N elements at once and is bit-identical to
+//! [`exp2()`] on each. See [`super::exp`]'s module documentation for how the
+//! main-path-plus-repair shape works and why it is exact; the only thing
+//! specific to `exp2` is where the main path ends. Here that is
+//! `0x3c9 <= abstop` and `|x| <= 928` — the window in which the scalar routine
+//! takes [`core()`] and the one-multiply tail, rather than [`specialcase()`]
+//! or one of the range answers.
 
 use cubecl::prelude::*;
 
 use crate::bits::inf64;
 use crate::config::MathConfig;
-use crate::fma::{FmaKind, fma64};
+use crate::fma::{FmaKind, fma64, fma64_vec};
 use crate::tables::consts::exp_tab;
 use crate::tables::double::exp as t;
 
@@ -185,6 +195,135 @@ pub fn fast(x: f64, #[comptime] checked: bool, #[comptime] fk: FmaKind) -> f64 {
         let abstop = u32::cast_from(u64::reinterpret(x) >> 52u64) & 0x7ffu32;
         if abstop >= 0x408u32 || abstop < 0x3c9u32 {
             out = bit_exact(x);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// The vector entry point.
+// ---------------------------------------------------------------------------
+
+/// `2^x` on N elements at once, bit-identical per element to [`exp2()`].
+/// See the module doc.
+#[cube]
+pub fn exp2_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
+    if comptime!(cfg.bit_exact()) {
+        bit_exact_vec::<N>(x)
+    } else {
+        fast_vec::<N>(x, comptime!(cfg.checked()), comptime!(cfg.fma()))
+    }
+}
+
+/// [`bit_exact()`] on N elements: the main path on the whole vector, the other
+/// branches replayed per element.
+///
+/// The repair test is `abstop < 0x3c9 || |x| > 928`, which is exactly the
+/// complement of the scalar routine's straight-line window: `|x| <= 928` puts
+/// `abstop` at `0x408` or below, so it already rules out the overflow, the
+/// underflow, the non-finite arm and [`specialcase()`].
+#[cube]
+pub fn bit_exact_vec<N: Size>(x: Vector<f64, N>) -> Vector<f64, N> {
+    let (tmp, sbits, _ki) = core_vec::<N>(x);
+    let scale = Vector::<f64, N>::reinterpret(sbits);
+    let mut out = scale + scale * tmp;
+    #[unroll]
+    for j in 0..N::value() {
+        let xj = x[j];
+        let bits = u64::reinterpret(xj);
+        let abstop = u32::cast_from(bits >> 52u64) & 0x7ffu32;
+        if abstop < 0x3c9u32 || (bits << 1u64) > (BITS_928 << 1u64) {
+            out[j] = bit_exact(xj);
+        }
+    }
+    out
+}
+
+/// [`core()`] on N elements: the same operations in the same order, per
+/// element; only the table gather is per element by necessity.
+///
+/// Separate multiplies and adds throughout, like the scalar one — see the
+/// module documentation for why fusing any of them would be a bug.
+#[cube]
+pub fn core_vec<N: Size>(x: Vector<f64, N>) -> (Vector<f64, N>, Vector<u64, N>, Vector<u64, N>) {
+    let shift = Vector::<f64, N>::new(t::EXP2_SHIFT);
+    let kd_s = x + shift;
+    let ki = Vector::<u64, N>::reinterpret(kd_s);
+    let kd = kd_s - shift;
+    let r = x - kd;
+
+    let tab = exp_tab();
+    let idx = (ki & Vector::<u64, N>::new(127u64)) * Vector::<u64, N>::new(2u64);
+    let mut tail_bits = Vector::<u64, N>::empty();
+    let mut scale_bits = Vector::<u64, N>::empty();
+    #[unroll]
+    for j in 0..N::value() {
+        let i = usize::cast_from(idx[j]);
+        tail_bits[j] = tab[i];
+        scale_bits[j] = tab[i + 1];
+    }
+    let tail = Vector::<f64, N>::reinterpret(tail_bits);
+    let sbits = scale_bits + (ki << Vector::<u64, N>::new(45u64));
+
+    let r2 = r * r;
+    let tmp = tail
+        + r * Vector::<f64, N>::new(t::EXP2_C1)
+        + r2 * (Vector::<f64, N>::new(t::EXP2_C2) + r * Vector::<f64, N>::new(t::EXP2_C3))
+        + r2 * r2 * (Vector::<f64, N>::new(t::EXP2_C4) + r * Vector::<f64, N>::new(t::EXP2_C5));
+    (tmp, sbits, ki)
+}
+
+/// [`fast()`] on N elements; the `checked` repair is per element.
+#[cube]
+pub fn fast_vec<N: Size>(
+    x: Vector<f64, N>,
+    #[comptime] checked: bool,
+    #[comptime] fk: FmaKind,
+) -> Vector<f64, N> {
+    let shift = Vector::<f64, N>::new(t::SHIFT);
+    let kd_s = x + shift;
+    let kd = kd_s - shift;
+    let r = x - kd;
+
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let r8 = r4 * r4;
+
+    let c12 = fma64_vec::<N>(r, Vector::<f64, N>::new(G2), Vector::<f64, N>::new(G1), fk);
+    let c34 = fma64_vec::<N>(r, Vector::<f64, N>::new(G4), Vector::<f64, N>::new(G3), fk);
+    let c56 = fma64_vec::<N>(r, Vector::<f64, N>::new(G6), Vector::<f64, N>::new(G5), fk);
+    let c78 = fma64_vec::<N>(r, Vector::<f64, N>::new(G8), Vector::<f64, N>::new(G7), fk);
+    let c910 = fma64_vec::<N>(r, Vector::<f64, N>::new(G10), Vector::<f64, N>::new(G9), fk);
+
+    let lo = fma64_vec::<N>(r2, c34, c12, fk);
+    let hi = fma64_vec::<N>(r2, c78, c56, fk);
+    let c1112 = fma64_vec::<N>(
+        r,
+        Vector::<f64, N>::new(G12),
+        Vector::<f64, N>::new(G11),
+        fk,
+    );
+    let top = fma64_vec::<N>(r2, c1112, c910, fk);
+    let hi2 = fma64_vec::<N>(r4, Vector::<f64, N>::new(G13), top, fk);
+    let mid = fma64_vec::<N>(r4, hi, lo, fk);
+    let poly = r * fma64_vec::<N>(r8, hi2, mid, fk);
+
+    let ki = Vector::<u64, N>::reinterpret(kd_s);
+    let k = (ki & Vector::<u64, N>::new(0x000f_ffff_ffff_ffffu64))
+        - Vector::<u64, N>::new(1u64 << 51u64);
+    let scale = Vector::<f64, N>::reinterpret(
+        (k + Vector::<u64, N>::new(1023u64)) << Vector::<u64, N>::new(52u64),
+    );
+    let mut out = fma64_vec::<N>(scale, poly, scale, fk);
+
+    if comptime!(checked) {
+        #[unroll]
+        for j in 0..N::value() {
+            let xj = x[j];
+            let abstop = u32::cast_from(u64::reinterpret(xj) >> 52u64) & 0x7ffu32;
+            if abstop >= 0x408u32 || abstop < 0x3c9u32 {
+                out[j] = bit_exact(xj);
+            }
         }
     }
     out

@@ -8,12 +8,31 @@
 //! straight into `__ieee754_log_fma`, and combining with three unfused
 //! operations — so that is what it does here, reusing [`super::ln`]'s own
 //! table walk rather than re-deriving one.
+//!
+//! # The vector entry points
+//!
+//! [`log2_vec()`] and [`log10_vec()`] evaluate N elements at once and are
+//! bit-identical to [`log2()`] and [`log10()`] on each. See [`super::exp`]'s
+//! module documentation for the shape.
+//!
+//! [`normalised_bits()`] vectorises as it stands — it is a `select`, not a
+//! branch — so a subnormal stays on the main path here rather than being
+//! repaired, and only the degenerate inputs (and, for `log2`, the near-one
+//! window) come back out per element.
+//!
+//! `log10` is the one that needs a word. Its main path calls the *whole* of
+//! [`super::ln::bit_exact()`], near-one arm included, so the vector form calls
+//! [`super::ln::bit_exact_vec()`] — which repairs its own near-one elements
+//! internally. The reduced argument sits within one exponent step of 1, so a
+//! good fraction of any input vector lands in that window; the repair is
+//! therefore more frequent here than anywhere else, and `log10_vec` gains
+//! correspondingly less.
 
 use cubecl::prelude::*;
 
 use crate::bits::neg_inf64;
 use crate::config::MathConfig;
-use crate::fma::{FmaKind, fma64};
+use crate::fma::{FmaKind, fma64, fma64_vec};
 use crate::tables::consts::log2_tab;
 use crate::tables::double::log2 as t;
 
@@ -222,4 +241,181 @@ pub fn log10_main(b: u64) -> f64 {
     // Deliberately not fused: the disassembly has three separate
     // multiply/add pairs here, not a fusion opportunity.
     (lr * INV_LN10 + y * LOG10_2LO) + y * LOG10_2HI
+}
+
+// ---------------------------------------------------------------------------
+// The vector entry points.
+// ---------------------------------------------------------------------------
+
+/// [`normalised_bits()`] on N elements. Already branch-free; only the types
+/// change.
+#[cube]
+pub fn normalised_bits_vec<N: Size>(x: Vector<f64, N>) -> Vector<u64, N> {
+    let ix = Vector::<u64, N>::reinterpret(x);
+    let sub = (ix >> Vector::<u64, N>::new(52u64)) & Vector::<u64, N>::new(0x7ffu64)
+        == Vector::<u64, N>::new(0u64);
+    select(
+        sub,
+        Vector::<u64, N>::reinterpret(x * Vector::<f64, N>::new(P52))
+            - Vector::<u64, N>::new(52u64 << 52u64),
+        ix,
+    )
+}
+
+/// `log2(x)` on N elements at once, bit-identical per element to [`log2()`].
+/// See the module doc.
+#[cube]
+pub fn log2_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
+    if comptime!(cfg.bit_exact()) {
+        log2_bit_exact_vec::<N>(x)
+    } else {
+        log2_fast_vec::<N>(x, comptime!(cfg.fma()))
+    }
+}
+
+/// [`log2()`]'s bit-exact arm on N elements: [`log2_main_vec()`] on the whole
+/// vector, the near-one window and the degenerate inputs per element.
+#[cube]
+pub fn log2_bit_exact_vec<N: Size>(x: Vector<f64, N>) -> Vector<f64, N> {
+    let mut out = log2_main_vec::<N>(normalised_bits_vec::<N>(x));
+    #[unroll]
+    for j in 0..N::value() {
+        let xj = x[j];
+        if degenerate(xj) {
+            out[j] = edge(xj);
+        } else if xj >= NEAR_LO && xj < NEAR_HI {
+            out[j] = log2_near_one(xj);
+        }
+    }
+    out
+}
+
+/// [`log2_main()`] on N elements: the same operations in the same order, per
+/// element; only the table gather is per element by necessity.
+#[cube]
+pub fn log2_main_vec<N: Size>(ix: Vector<u64, N>) -> Vector<f64, N> {
+    let tmp = ix - Vector::<u64, N>::new(OFF);
+    let idx = (tmp >> Vector::<u64, N>::new(46u64)) & Vector::<u64, N>::new(63u64);
+    let z = Vector::<f64, N>::reinterpret(ix - (tmp & Vector::<u64, N>::new(0xfffu64 << 52u64)));
+    let kd = Vector::<f64, N>::cast_from(
+        Vector::<i64, N>::reinterpret(tmp) >> Vector::<i64, N>::new(52i64),
+    );
+
+    let tab = log2_tab();
+    let mut invc_bits = Vector::<u64, N>::empty();
+    let mut logc_bits = Vector::<u64, N>::empty();
+    #[unroll]
+    for j in 0..N::value() {
+        let base = 2usize * usize::cast_from(idx[j]);
+        invc_bits[j] = tab[base];
+        logc_bits[j] = tab[base + 1];
+    }
+    let invc = Vector::<f64, N>::reinterpret(invc_bits);
+    let logc = Vector::<f64, N>::reinterpret(logc_bits);
+
+    // `r = z/c - 1`, then `r / ln 2` carried in double-double as `t1 + t2`.
+    let r = fma(z, invc, Vector::<f64, N>::new(-1.0));
+    let t1 = r * Vector::<f64, N>::new(t::INVLN2HI);
+    // `-t1`, computed as `r * -INVLN2HI` rather than by negating `t1`: the C++
+    // backends have no unary minus on a vector type. A product's sign is the
+    // exclusive or of its operands' signs and its magnitude comes from theirs,
+    // so this is `-(r * INVLN2HI)` bit for bit.
+    let neg_t1 = r * Vector::<f64, N>::new(-t::INVLN2HI);
+    let t2 = fma(
+        r,
+        Vector::<f64, N>::new(t::INVLN2LO),
+        fma(r, Vector::<f64, N>::new(t::INVLN2HI), neg_t1),
+    );
+
+    let t3 = kd + logc;
+    let hi = t3 + t1;
+    let lo = t3 - hi + t1 + t2;
+
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let a01 = fma(
+        r,
+        Vector::<f64, N>::new(t::A1),
+        Vector::<f64, N>::new(t::A0),
+    );
+    let a23 = fma(
+        r,
+        Vector::<f64, N>::new(t::A3),
+        Vector::<f64, N>::new(t::A2),
+    );
+    let a45 = fma(
+        r,
+        Vector::<f64, N>::new(t::A5),
+        Vector::<f64, N>::new(t::A4),
+    );
+    let poly = fma(r4, a45, fma(r2, a23, a01));
+    hi + fma(r2, poly, lo)
+}
+
+/// [`log2_fast()`] on N elements; the degenerate inputs are repaired per
+/// element, as [`log2()`] does for every policy.
+#[cube]
+pub fn log2_fast_vec<N: Size>(x: Vector<f64, N>, #[comptime] fk: FmaKind) -> Vector<f64, N> {
+    let (e, poly) = crate::double::ln::fold_vec::<N>(x, fk);
+    let mut out = fma64_vec::<N>(poly, Vector::<f64, N>::new(LOG2_E), e, fk);
+    #[unroll]
+    for j in 0..N::value() {
+        let xj = x[j];
+        if degenerate(xj) {
+            out[j] = edge(xj);
+        }
+    }
+    out
+}
+
+/// `log10(x)` on N elements at once, bit-identical per element to [`log10()`].
+/// See the module doc.
+#[cube]
+pub fn log10_vec<N: Size>(x: Vector<f64, N>, #[comptime] cfg: MathConfig) -> Vector<f64, N> {
+    let mut out = if comptime!(cfg.bit_exact()) {
+        log10_main_vec::<N>(normalised_bits_vec::<N>(x))
+    } else {
+        let (e, poly) = crate::double::ln::fold_vec::<N>(x, comptime!(cfg.fma()));
+        fma64_vec::<N>(
+            poly,
+            Vector::<f64, N>::new(INV_LN10),
+            e * Vector::<f64, N>::new(LOG10_2),
+            comptime!(cfg.fma()),
+        )
+    };
+    #[unroll]
+    for j in 0..N::value() {
+        let xj = x[j];
+        if degenerate(xj) {
+            out[j] = edge(xj);
+        }
+    }
+    out
+}
+
+/// [`log10_main()`] on N elements.
+///
+/// The inner call is [`super::ln::bit_exact_vec()`] — the whole of `ln`, as
+/// `__log10_finite` calls it, so that `log10(1)` is an exact zero rather than
+/// a tiny nonzero. The three closing operations are deliberately unfused, for
+/// the reason [`log10_main()`] gives.
+#[cube]
+pub fn log10_main_vec<N: Size>(b: Vector<u64, N>) -> Vector<f64, N> {
+    // An *arithmetic* shift, for the reason [`log10_main()`] gives.
+    let k = (Vector::<i64, N>::reinterpret(b) >> Vector::<i64, N>::new(52i64))
+        - Vector::<i64, N>::new(1023i64);
+    // `i` is glibc's own rounding-parity bit: 1 when `k` is negative.
+    let i = Vector::<i64, N>::reinterpret(
+        Vector::<u64, N>::reinterpret(k) >> Vector::<u64, N>::new(63u64),
+    );
+    let y = Vector::<f64, N>::cast_from(k + i);
+    let exp_field = (Vector::<u64, N>::new(1023u64) - Vector::<u64, N>::reinterpret(i))
+        << Vector::<u64, N>::new(52u64);
+    let reduced = Vector::<f64, N>::reinterpret(
+        (b & Vector::<u64, N>::new(0x000f_ffff_ffff_ffffu64)) | exp_field,
+    );
+
+    let lr = crate::double::ln::bit_exact_vec::<N>(reduced);
+    (lr * Vector::<f64, N>::new(INV_LN10) + y * Vector::<f64, N>::new(LOG10_2LO))
+        + y * Vector::<f64, N>::new(LOG10_2HI)
 }

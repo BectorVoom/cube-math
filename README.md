@@ -58,6 +58,55 @@ The op is a comptime enum, so `Unary::Exp` compiles a kernel that contains
 `exp` and nothing else, and the choice is part of the kernel's identity rather
 than a branch inside it.
 
+## The vector entry points
+
+`exp`, `exp2`, `exp10`, `ln`, `log2` and `log10` also come in a `_vec` form
+that takes N elements at once:
+
+```rust
+#[cube]
+fn my_kernel<N: Size>(x: &Array<Vector<f64, N>>, out: &mut Array<Vector<f64, N>>,
+                      #[comptime] cfg: MathConfig) {
+    out[ABSOLUTE_POS] = m::exp::exp_vec::<N>(x[ABSOLUTE_POS], cfg);
+}
+```
+
+Each is **bit-identical to its scalar twin on every element**, on every policy,
+at every width. That is not a bound, it is an equality, and `tests/vector.rs`
+holds all six to it at `to_bits()` at widths 1/2/4/8 over the equivalence
+sweep plus every branch boundary each function has.
+
+It is exact by construction rather than by luck. The scalar schedule is
+rewritten on `Vector<f64, N>` — every operation elementwise, the fused
+multiply-adds through `fma64_vec`, the table gather one element at a time — and
+IEEE-754 rounds identically whether an operand sits in a scalar or in a lane,
+so the main-path elements are the scalar routine's bits by definition. The
+elements the scalar routine would send down a *different* branch are then
+overwritten by the scalar routine itself, on that element alone. So the main
+path is exact by construction and the rest is the scalar function, full stop.
+
+What each function has to get right is where its main path ends:
+
+| | main path | repaired per element |
+|---|---|---|
+| `exp` | `0x3c9 <= abstop < 0x408` | tiny, `|x| >= 512`, non-finite |
+| `exp2` | `abstop >= 0x3c9` and `|x| <= 928` | tiny, `specialcase`, the range answers |
+| `exp10` | `SMALL_TOP <= abstop < SMALL_TOP + THRESH` (`|x| < 256`) | tiny, `specialcase`, the range answers |
+| `ln` | positive normal outside the near-one window | the near-one window, the degenerate inputs |
+| `log2` | not degenerate, outside the near-one window | the near-one window, the degenerate inputs |
+| `log10` | not degenerate | the degenerate inputs |
+
+Subnormals are *not* a repair case for the two `logx` functions: their
+`normalised_bits` is a `select` rather than a branch, so it vectorises as it
+stands. `log10` is the one that gains least — its main path calls the whole of
+`ln`, near-one arm included, and its reduced argument sits within one exponent
+step of 1, so a good fraction of any input vector lands in that window.
+
+Why they exist: a kernel that already holds N points in a vector — a grid
+collocation, an unrolled stencil — would otherwise extract each element, call
+the scalar routine and insert the result, which is N dependent chains where one
+vectorised chain will do. What that saves is measured below.
+
 ## What changed in the port, and why it got simpler
 
 `rmath` computes a whole vector on the main path and then *repairs* the lanes
@@ -318,6 +367,36 @@ functions' near-a-zero repair is exactly the data-dependent branch that stops
 `rmath` vectorising them at all; here it costs the thread that takes it and
 nothing else.
 
+### The vector entry points
+
+`cargo run --release --features "cpu,hip" --example bench_vec`, four million
+`f64` already resident, same machine, best of three. Every row is the
+`BitExact` policy, and every vector row is bit-identical to the scalar row it
+sits under — this is a table of what the identity costs, and it costs less than
+nothing.
+
+| Melem/s, CPU runtime | scalar | width 2 | width 4 | width 8 | width 8 vs scalar |
+|---|---|---|---|---|---|
+| `exp` | 295 | 456 | 600 | **791** | 2.68x |
+| `exp2` | 273 | 457 | 603 | **792** | 2.90x |
+| `exp10` | 279 | 453 | 625 | **804** | 2.88x |
+| `ln` | 279 | 449 | 599 | **800** | 2.87x |
+| `log2` | 269 | 420 | 599 | **776** | 2.88x |
+| `log10` | 256 | 389 | 559 | **746** | 2.92x |
+
+Close to linear to width 4 and then tapering, which is what a machine with
+four-wide `f64` vector registers should do.
+
+On ROCm the same table is **flat** — every ratio lands between 0.95x and 1.6x,
+and moving between those two is within the run-to-run spread the next section
+describes, not a measurement. That is the correct outcome rather than a
+disappointing one: a GPU is already SIMT, the scalar kernel's threads *are* the
+lanes, and widening buys no parallelism that was not already there while
+costing registers and occupancy. The vector entry points are not there to make
+an elementwise pass faster on a GPU — `launch::unary` is already the right tool
+for that, and it stays the right tool. They are there so that a kernel which
+already holds a `Vector<f64, N>` does not have to take it apart.
+
 ### Why "best of six" and not "the number"
 
 Because on this device the two words are not interchangeable, and the spread
@@ -392,7 +471,15 @@ infinity where a subnormal belonged sailed through.
 instruction on 1.6 million triples, including the cancellation, subnormal and
 tie cases that separate a correct emulation from a plausible one.
 
-Both suites pass in full on the CubeCL CPU runtime and on ROCm (7.1.1,
+`tests/vector.rs` holds each `_vec` entry point to `to_bits()` equality with
+its scalar twin, on all four policies, at widths 1/2/4/8, over the equivalence
+sweep plus every branch boundary the function has. The boundaries are the
+point: a vector routine computes its main path on *every* element and then
+overwrites the ones belonging to another branch, so the failure mode is an
+off-by-one in that repair predicate, and it is visible nowhere except on inputs
+that sit astride a boundary.
+
+All three suites pass in full on the CubeCL CPU runtime and on ROCm (7.1.1,
 gfx1151), which are the two backends that report `bit_exact_capable()`. `wgpu`
 reports `f64` unusable and skips itself, as it should — see below.
 
@@ -411,6 +498,20 @@ arithmetic, which only a compiled kernel exercises.
 3. Add a variant to the enum in `src/launch/unary.rs` or `binary.rs`, and an
    arm to each precision's `match`.
 4. Add a line to `tests/equivalence.rs`.
+5. Optionally, add a `_vec` twin: the same schedule on `Vector<f64, N>`, with
+   the elements the scalar routine would send down another branch overwritten
+   afterwards by the scalar routine on that element. Add a line to
+   `tests/vector.rs` and one to `examples/bench_vec.rs`; both are macro-driven,
+   so a line is all it is. Worth doing where the main path is long and
+   straight, not worth it where the function is mostly classification.
+
+   Two things bite when writing one. The C++ backends have **no unary minus on
+   a vector type** — `hipcc` rejects `-double_2` and the CPU runtime accepts
+   it, so this compiles and passes locally and then fails on ROCm. Fold the
+   sign into the constant instead (`kd * -C` for `-kd * C`), which is the same
+   number because a product's sign is the exclusive or of its operands'. And
+   scalar-typed `reinterpret`/`cast_from` do not lift to vectors implicitly:
+   write `Vector::<u64, N>::reinterpret(v)`, not `u64::reinterpret(v)`.
 
 Two things the sweep catches that a spot check will not, and both happened
 here: a `Fast` series can be an order of magnitude short and still look
